@@ -6,9 +6,25 @@
 #include <cstdlib>
 
 #include <vector>
+#include <cstring>
 
+/// window parameters
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+/// config variable to the program to specify the layers to enable
+const std::vector<const char*> validationLayers = {
+  "VK_LAYER_KHRONOS_validation" // All of the useful standard validation is bundled into this layer included in the SDK
+};
+
+/// config variable to the program whether to enable the validation layer or not
+/// NDEBUG -> not debug
+#ifdef NDEBUG
+  const bool enableValidationLayers = false;
+#else
+  const bool enableValidationLayers = true;
+#endif
+
 
 class TriangleApp {
   public:
@@ -66,7 +82,7 @@ class TriangleApp {
       appInfo.engineVersion      = VK_MAKE_VERSION(1, 0, 0);
       appInfo.apiVersion         = VK_API_VERSION_1_0;  // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
 
-      // Tells the Vulkan driver which global extensions and validation layers we want to use
+      // Tells the Vulkan driver which global extensions we want to use
       VkInstanceCreateInfo createInfo{};
       createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
       createInfo.pApplicationInfo = &appInfo;
@@ -77,9 +93,23 @@ class TriangleApp {
       createInfo.ppEnabledExtensionNames = glfwExtensions;
 
       std::cout << "***** Required extensions *****\n";
-      std::cout << "\t" << *glfwExtensions << "\n";
+      for(int i = 0; i < glfwExtensionCount; i++) {
+        std::cout << "\t" << glfwExtensions[i] << "\n";
+      }
 
-      createInfo.enabledLayerCount = 0; // determine the global validation layers to enable
+      // call to check validation layers availability
+      if (enableValidationLayers && !checkValidationLayerSupport()) {
+        throw std::runtime_error("Validation layers requested, but not available!");
+      }
+
+      // determine the global validation layers to enable and include
+      if(enableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+      }
+      else {
+        createInfo.enabledLayerCount = 0;
+      }
 
       VkResult result = vkCreateInstance(&createInfo, nullptr, &vkinstance); // return VK_SUCCESS or an error code
       if(result != VK_SUCCESS) {
@@ -97,16 +127,47 @@ class TriangleApp {
       vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
       std::vector<VkExtensionProperties> extensions(extensionCount);       // allocate an array to hold the extensions list
       vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()); // query the extension details
+      
       std::cout << "\n***** Available extensions *****\n";
-      for(const auto& extension : extensions) {
-        std::cout << '\t' << extension.extensionName;
+      for(const auto& availableExt : extensions) {
+        std::cout << '\t' << availableExt.extensionName;
 
         // check if it is in required list of extensions
-        if (extension.extensionName == *glfwExtensions) {
-          std::cout << "\tIs required";
+        for(int i = 0; i < glfwExtensionCount; i++) {
+          if(strcmp(availableExt.extensionName, glfwExtensions[i]) == 0) {
+            std::cout << " - Is required";
+            break;
+          }
         }
         std::cout << "\n";
       }
+    }
+
+    /// Checks if all of the requested validation layers are available
+    bool checkValidationLayerSupport() {
+      uint32_t layerCount;
+      vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+      std::vector<VkLayerProperties> availableLayers(layerCount);
+      vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+      // Check if all of the layers in validationLayers exist in the availableLayers list.
+      for(const char* layerName : validationLayers) {
+        bool layerFound = false;
+
+        for(const auto& layerProperties : availableLayers) {
+          if(strcmp(layerName, layerProperties.layerName) == 0) {
+            layerFound = true;
+            break;
+          }
+        }
+
+        if(!layerFound) {
+          return false;
+        }
+      }
+
+      return true;
     }
 };
 
