@@ -8,6 +8,10 @@
 #include <vector>
 #include <cstring>
 
+#include <map>
+#include <optional> // from C++17
+
+
 /// window parameters
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -65,6 +69,17 @@ class TriangleApp {
     GLFWwindow* window;
     VkInstance vkinstance;
     VkDebugUtilsMessengerEXT debugMessenger; // The debug callback in Vulkan is managed with a handle that needs to be explicitly created and destroyed.
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // Implicitly destroyed, therefore need not do anything in cleanup.
+
+    struct QueueFamilyIndices { // To hold info about different kinds of queue families supported by the physical device
+      std::optional<uint32_t> graphicsFamily; 
+
+      bool isComplete() {
+        // At any point you can query if a std::optional<T> variable contains a value or not by calling its has_value() member function
+        return graphicsFamily.has_value();
+      }
+    };
+
 
     /// Window creation 
     void initWindow() {
@@ -79,42 +94,24 @@ class TriangleApp {
 
     void initVulkan() {
       createInstance(); // initializes Vulkan library
-      setupDebugMessenger();
-    }
-
-
-    void mainLoop() {
-      while(!glfwWindowShouldClose(window)) {  // to keep the window open until it is closed or an error occurs
-        glfwPollEvents();
-      }
-    }
-
-
-    /// Resource management
-    void cleanup() {
-      if(enableValidationLayers) {
-        DestroyDebugUtilsMessengerEXT(vkinstance, debugMessenger, nullptr);
-      }
-
-      vkDestroyInstance(vkinstance, nullptr);
-      glfwDestroyWindow(window);
-      glfwTerminate();
+      setupDebugMessenger(); // setup error handling
+      pickPhysicalDevice();
     }
 
 
     /// Create an instance of the Vulkan library
     void createInstance() {
       // populate struct that holds info about our app
-      VkApplicationInfo appInfo {}; 
-      appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-      appInfo.pApplicationName   = "Vulkan Triangle No. 1";
+      VkApplicationInfo appInfo {};
+      appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+      appInfo.pApplicationName = "Vulkan Triangle No. 1";
       appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);  // constructs an API version number.
-      appInfo.pEngineName        = "No Engine";
-      appInfo.engineVersion      = VK_MAKE_VERSION(1, 0, 0);
-      appInfo.apiVersion         = VK_API_VERSION_1_0;  // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+      appInfo.pEngineName = "No Engine";
+      appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+      appInfo.apiVersion = VK_API_VERSION_1_0;  // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
 
       // Tells the Vulkan driver which global extensions we want to use
-      VkInstanceCreateInfo createInfo{};
+      VkInstanceCreateInfo createInfo {};
       createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
       createInfo.pApplicationInfo = &appInfo;
 
@@ -129,7 +126,7 @@ class TriangleApp {
       }
 
       // call to check validation layers availability
-      if (enableValidationLayers && !checkValidationLayerSupport()) {
+      if(enableValidationLayers && !checkValidationLayerSupport()) {
         throw std::runtime_error("Validation layers requested, but not available!");
       }
 
@@ -163,7 +160,7 @@ class TriangleApp {
       vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
       std::vector<VkExtensionProperties> extensions(extensionCount);       // allocate an array to hold the extensions list
       vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()); // query the extension details
-      
+
       std::cout << "\n***** Available extensions *****\n";
       for(const auto& availableExt : extensions) {
         std::cout << '\t' << availableExt.extensionName;
@@ -214,7 +211,7 @@ class TriangleApp {
 
       // GLFW's built-in function that returns an array of the extension(s) it needs to interface with the window system
       // The extensions specified by GLFW are always required
-      glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount); 
+      glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
       std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
@@ -225,7 +222,7 @@ class TriangleApp {
       return extensions;
     }
 
-
+    
     /// Debug callback function
     /// Returns a boolean that indicates if the Vulkan call that triggered the validation layer message should be aborted. 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, // specifies the severity of the message
@@ -252,6 +249,7 @@ class TriangleApp {
       //createInfo.pUserData = nullptr; // Optional
     }
 
+
     /// Tell Vulkan about the callback function we created above.
     void setupDebugMessenger() {
       if(!enableValidationLayers)
@@ -267,6 +265,146 @@ class TriangleApp {
       // The debug messenger is specific to our Vulkan instance and its layers
       if(CreateDebugUtilsMessengerEXT(vkinstance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
         throw std::runtime_error("failed to set up debug messenger!");
+      }
+    }
+    
+    
+    /// Look for and select a graphics card in the system that supports the features we need.
+    void pickPhysicalDevice() {
+      uint32_t deviceCount = 0;
+      vkEnumeratePhysicalDevices(vkinstance, &deviceCount, nullptr);
+
+      if(deviceCount == 0) {
+        throw std::runtime_error("failed to find GPUs with Vulkan support!");
+      }
+
+      // Allocate an array to hold all of the VkPhysicalDevice handles.
+      std::vector<VkPhysicalDevice> devices(deviceCount);
+      vkEnumeratePhysicalDevices(vkinstance, &deviceCount, devices.data());
+
+      // Find a suitable device
+      for(const auto& device : devices) {
+        if(isDeviceSuitable(device)) {
+          physicalDevice = device;
+          break;
+        }
+      }
+      if(physicalDevice == VK_NULL_HANDLE) {
+        throw std::runtime_error("failed to find a suitable GPU!");
+      }
+
+      // Uncomment below block of code if using rateDeviceSuitability
+      // // Begin uncomment
+      //// Use an ordered map to automatically sort candidates by increasing score
+      //std::multimap<int, VkPhysicalDevice> candidates;
+
+      //for(const auto& device : devices) {
+      //  int score = rateDeviceSuitability(device);
+      //  candidates.insert(std::make_pair(score, device));
+      //}
+
+      //// Check if the best candidate is suitable at all
+      //if(candidates.rbegin()->first > 0) {
+      //  physicalDevice = candidates.rbegin()->second;
+      //}
+      //else {
+      //  throw std::runtime_error("failed to find a suitable GPU!");
+      //}
+      // // End uncomment
+    }
+
+
+    /// Evaluate a physical device and check if it is suitable for the operations we want to perform
+    bool isDeviceSuitable(VkPhysicalDevice device) {
+      // Perform basic device suitability checks - name, type and supported vulkan version
+      VkPhysicalDeviceProperties deviceProperties;
+      vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+      // Check support for optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
+      VkPhysicalDeviceFeatures deviceFeatures;
+      vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+      //// Would return next line if the application were more complex
+      //return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
+      // But for now we just need Vulkan, so any GPU will do
+
+      QueueFamilyIndices indices = findQueueFamilies(device);
+
+      return indices.isComplete();
+    }
+
+
+    /// OPTIONAL - give each physical device a score and pick the most suitable one, but also have a fallback to an integrated GPU
+    int rateDeviceSuitability(VkPhysicalDevice device) {
+      int score = 0;
+
+      // Perform basic device suitability checks - name, type and supported vulkan version
+      VkPhysicalDeviceProperties deviceProperties;
+      vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+      // Check support for optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
+      VkPhysicalDeviceFeatures deviceFeatures;
+      vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+      // Discrete GPUs have a significant performance advantage
+      if(deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        score += 1000;
+      }
+
+      // Maximum possible size of textures affects graphics quality
+      score += deviceProperties.limits.maxImageDimension2D;
+
+      // Application can't function without geometry shaders
+      if(!deviceFeatures.geometryShader) {
+        return 0;
+      }
+
+      return score;
+    }
+
+    
+    /// Check which queue families are supported by the device and which one of these supports the commands that we want to use
+    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+      QueueFamilyIndices indices;
+
+      uint32_t queueFamilyCount = 0;
+      vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+      // The VkQueueFamilyProperties struct contains some details about the queue family
+      // including the type of operations that are supported and the number of queues that can be created based on that family
+      std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+      vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+      // We need to find at least one queue family that supports VK_QUEUE_GRAPHICS_BIT
+      int i = 0;
+      for(const auto& queueFamily : queueFamilies) {
+        if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+          indices.graphicsFamily = i;
+        }
+        if(indices.isComplete()) { // break loop if we have found a suitable queue family
+          break;
+        }
+        i++;
+      }
+
+      return indices;
+    }
+
+
+    /// Resource management
+    void cleanup() {
+      if(enableValidationLayers) {
+        DestroyDebugUtilsMessengerEXT(vkinstance, debugMessenger, nullptr);
+      }
+
+      vkDestroyInstance(vkinstance, nullptr);
+      glfwDestroyWindow(window);
+      glfwTerminate();
+    }
+
+
+    void mainLoop() {
+      while(!glfwWindowShouldClose(window)) {  // to keep the window open until it is closed or an error occurs
+        glfwPollEvents();
       }
     }
 };
