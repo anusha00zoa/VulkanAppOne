@@ -7,7 +7,7 @@
 
 #include <vector>
 #include <cstring>
-
+#include <set>
 #include <map>
 #include <optional> // from C++17
 
@@ -75,13 +75,17 @@ class TriangleApp {
     VkDevice                  logicalDevice;                    // A logical device instance. You can create multiple logical devices from the same physical device if you have varying requirements.
     VkQueue                   graphicsQueue;                    // Store a handle to the graphics queue. 
                                                                 // Device queues are implicitly cleaned up when the device is destroyed, so we don't need to do anything in cleanup.
+    VkQueue                   presentQueue;                     // The presentation queue handle
+    VkSurfaceKHR              surface;                          // Is platform agnostic, but its creation isn't because it depends on window system details
+                                                                // It is destroyed before the application instance.
 
     struct QueueFamilyIndices {                                 // To hold info about different kinds of queue families supported by the physical device
       std::optional<uint32_t> graphicsFamily; 
+      std::optional<uint32_t> presentFamily;
 
       bool isComplete() {
         // At any point you can query if a std::optional<T> variable contains a value or not by calling its has_value() member function
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
       }
     };
     #pragma endregion 
@@ -323,6 +327,7 @@ class TriangleApp {
 
       QueueFamilyIndices indices = findQueueFamilies(device);
 
+      // Ensure that a device can present images to the surface we created.
       return indices.isComplete();
     }
 
@@ -367,39 +372,55 @@ class TriangleApp {
       // including the type of operations that are supported and the number of queues that can be created based on that family
       std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
       vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
       // We need to find at least one queue family that supports VK_QUEUE_GRAPHICS_BIT
+      // And also look for a queue family that has the capability of presenting to our window surface
       int i = 0;
       for(const auto& queueFamily : queueFamilies) {
         if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
           indices.graphicsFamily = i;
         }
+        
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+        if(presentSupport) {
+          indices.presentFamily = i;
+        }
+        
         if(indices.isComplete()) { // break loop if we have found a suitable queue family
           break;
         }
         i++;
       }
-
       return indices;
     }
     #pragma endregion
 
 
+    #pragma region Logical-devices-and-queues
     /// Set up a logical device to interface with the selected physical device
     void createLogicalDevice() {
       QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-      // This structure describes the number of queues we want for a single queue family.
-      VkDeviceQueueCreateInfo queueCreateInfo {};
-      queueCreateInfo.sType             = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-      queueCreateInfo.queueFamilyIndex  = indices.graphicsFamily.value();
-      queueCreateInfo.queueCount        = 1;
+      // VkDeviceQueueCreateInfo is a structure that describes the number of queues we want for a single queue family.
+      // We need to have multiple VkDeviceQueueCreateInfo structs to create a queue from both families. 
+      // An elegant way to do that is to create a set of all unique queue families that are necessary for the required queues
+      std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+      std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
       /// NOTES
       /// Vulkan lets you assign priorities to queues to influence the scheduling of command buffer execution 
       /// using floating point numbers between 0.0 and 1.0. 
       /// This is required even if there is only a single queue.s
       float queuePriority = 1.0f;
-      queueCreateInfo.pQueuePriorities = &queuePriority;
+      for(uint32_t queueFamily : uniqueQueueFamilies) {
+        VkDeviceQueueCreateInfo queueCreateInfo {};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+      }
 
       // Specify the set of device features that we'll be using
       VkPhysicalDeviceFeatures deviceFeatures {};
@@ -408,9 +429,9 @@ class TriangleApp {
       VkDeviceCreateInfo createInfo {};
       createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
       
-      // Add pointers to the queue creation info and device features structs
-      createInfo.pQueueCreateInfos = &queueCreateInfo;
-      createInfo.queueCreateInfoCount = 1;
+      // Add pointers to the queues creation info and device features structs
+      createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+      createInfo.pQueueCreateInfos = queueCreateInfos.data();
       createInfo.pEnabledFeatures = &deviceFeatures;
       
       // Specify extensions (these are device specific)
@@ -437,8 +458,40 @@ class TriangleApp {
 
       // Retrieve a queue handle for the graphics queue family.
       vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
+      vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
     }
-    //#pragma endregion 
+    #pragma endregion
+
+
+    #pragma region Window-surface
+    /// NOTES
+    /// To establish the connection between Vulkan and the window system to present results to the screen, 
+    /// we need to use the WSI (Window System Integration) extensions
+    /// The surface in our program will be backed by the window that we've already opened with GLFW.
+    /// The window surface needs to be created right after the instance creation, 
+    /// because it can actually influence the physical device selection.
+    /// Window surfaces are an entirely optional component in Vulkan, if you just need off-screen rendering. 
+    /// Vulkan allows you to do that without hacks like creating an invisible window (necessary for OpenGL)
+
+    /// Using the platform specific extension 'VK_KHR_win32_surface' to create a surface - not needed for this tutorial
+    /// VkWin32SurfaceCreateInfoKHR createInfo {};
+    /// createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    /// createInfo.hwnd = glfwGetWin32Window(window); // used to get the raw HWND from the GLFW window object
+    /// createInfo.hinstance = GetModuleHandle(nullptr); // returns the HINSTANCE handle of the current process.
+    /// if(vkCreateWin32SurfaceKHR(vkinstance, &createInfo, nullptr, &surface) != VK_SUCCESS) { 
+    ///   throw std::runtime_error("failed to create window surface!");
+    /// }
+    /// The 'glfwCreateWindowSurface' function performs exactly this operation with a different implementation for each platform.
+
+    void createSurface() {
+      if(glfwCreateWindowSurface(vkinstance,                  // the VkInstance
+                                  window,                     // GLFW window pointer 
+                                  nullptr,                    // custom allocators 
+                                  &surface) != VK_SUCCESS) {  // pointer to VkSurfaceKHR variable
+        throw std::runtime_error("failed to create window surface!");
+      }
+    }  
+    #pragma endregion
 
 
     #pragma region Base-code
@@ -454,10 +507,12 @@ class TriangleApp {
 
 
     void initVulkan() {
+      // ORDER OF FUNCTION CALLS SHOULD NOT BE CHANGED
       createInstance();       // initializes Vulkan library
       setupDebugMessenger();  // setup error handling
-      pickPhysicalDevice();
-      createLogicalDevice();
+      createSurface();        // creates window surface
+      pickPhysicalDevice();   // selects a suitable physical device
+      createLogicalDevice();  // creates a logical device to interface with the selected physical device
     }
 
 
@@ -469,6 +524,7 @@ class TriangleApp {
         DestroyDebugUtilsMessengerEXT(vkinstance, debugMessenger, nullptr);
       }
 
+      vkDestroySurfaceKHR(vkinstance, surface, nullptr);
       vkDestroyInstance(vkinstance, nullptr);
       glfwDestroyWindow(window);
       glfwTerminate();
