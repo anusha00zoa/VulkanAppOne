@@ -12,24 +12,24 @@
 #include <optional> // from C++17
 
 
-/// window parameters
-const uint32_t WIDTH = 800;
+// window parameters
+const uint32_t WIDTH  = 800;
 const uint32_t HEIGHT = 600;
 
-/// config variable to the program to specify the layers to enable
+// config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation" // All of the useful standard validation is bundled into this layer included in the SDK
 };
 
-/// config variable to the program whether to enable the validation layer or not
-/// NDEBUG -> not debug
+// config variable to the program whether to enable the validation layer or not
+// NDEBUG -> not debug
 #ifdef NDEBUG
   const bool enableValidationLayers = false;
 #else
   const bool enableValidationLayers = true;
 #endif
 
-
+#pragma region Validation-layers-utils
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
                                       const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, 
                                       const VkAllocationCallbacks* pAllocator, 
@@ -54,6 +54,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
     func(instance, debugMessenger, pAllocator);
   }
 }
+#pragma endregion
 
 
 class TriangleApp {
@@ -66,12 +67,16 @@ class TriangleApp {
     }
 
   private:
-    GLFWwindow* window;
-    VkInstance vkinstance;
-    VkDebugUtilsMessengerEXT debugMessenger; // The debug callback in Vulkan is managed with a handle that needs to be explicitly created and destroyed.
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // Implicitly destroyed, therefore need not do anything in cleanup.
+    #pragma region Class-members
+    GLFWwindow*               window;
+    VkInstance                vkinstance;
+    VkDebugUtilsMessengerEXT  debugMessenger;                   // The debug callback in Vulkan is managed with a handle that needs to be explicitly created and destroyed.
+    VkPhysicalDevice          physicalDevice  = VK_NULL_HANDLE; // Implicitly destroyed, therefore need not do anything in cleanup.
+    VkDevice                  logicalDevice;                    // A logical device instance. You can create multiple logical devices from the same physical device if you have varying requirements.
+    VkQueue                   graphicsQueue;                    // Store a handle to the graphics queue. 
+                                                                // Device queues are implicitly cleaned up when the device is destroyed, so we don't need to do anything in cleanup.
 
-    struct QueueFamilyIndices { // To hold info about different kinds of queue families supported by the physical device
+    struct QueueFamilyIndices {                                 // To hold info about different kinds of queue families supported by the physical device
       std::optional<uint32_t> graphicsFamily; 
 
       bool isComplete() {
@@ -79,36 +84,20 @@ class TriangleApp {
         return graphicsFamily.has_value();
       }
     };
+    #pragma endregion 
 
 
-    /// Window creation 
-    void initWindow() {
-      glfwInit();  // init GLFW
-
-      glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // not create a window in a OpenGL context
-      glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);    // disable window resizing
-
-      window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
-    }
-
-
-    void initVulkan() {
-      createInstance(); // initializes Vulkan library
-      setupDebugMessenger(); // setup error handling
-      pickPhysicalDevice();
-    }
-
-
+    #pragma region Application-instance
     /// Create an instance of the Vulkan library
     void createInstance() {
       // populate struct that holds info about our app
       VkApplicationInfo appInfo {};
-      appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-      appInfo.pApplicationName = "Vulkan Triangle No. 1";
-      appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);  // constructs an API version number.
-      appInfo.pEngineName = "No Engine";
-      appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-      appInfo.apiVersion = VK_API_VERSION_1_0;  // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+      appInfo.sType               = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+      appInfo.pApplicationName    = "Vulkan Triangle No. 1";
+      appInfo.applicationVersion  = VK_MAKE_VERSION(1, 0, 0); // constructs an API version number.
+      appInfo.pEngineName         = "No Engine";
+      appInfo.engineVersion       = VK_MAKE_VERSION(1, 0, 0);
+      appInfo.apiVersion          = VK_API_VERSION_1_0;       // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
 
       // Tells the Vulkan driver which global extensions we want to use
       VkInstanceCreateInfo createInfo {};
@@ -175,8 +164,10 @@ class TriangleApp {
         std::cout << "\n";
       }
     }
+    #pragma endregion
 
 
+    #pragma region Validation-layers
     /// Checks if all of the requested validation layers are available
     bool checkValidationLayerSupport() {
       uint32_t layerCount;
@@ -242,10 +233,10 @@ class TriangleApp {
     /// utility function to populate createInfo objects
     void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
       createInfo = {};
-      createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-      createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-      createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-      createInfo.pfnUserCallback = debugCallback;
+      createInfo.sType            = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+      createInfo.messageSeverity  = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+      createInfo.messageType      = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+      createInfo.pfnUserCallback  = debugCallback;
       //createInfo.pUserData = nullptr; // Optional
     }
 
@@ -267,8 +258,10 @@ class TriangleApp {
         throw std::runtime_error("failed to set up debug messenger!");
       }
     }
-    
-    
+    #pragma endregion
+
+
+    #pragma region Physical-devices-and-queue-families
     /// Look for and select a graphics card in the system that supports the features we need.
     void pickPhysicalDevice() {
       uint32_t deviceCount = 0;
@@ -388,10 +381,90 @@ class TriangleApp {
 
       return indices;
     }
+    #pragma endregion
+
+
+    /// Set up a logical device to interface with the selected physical device
+    void createLogicalDevice() {
+      QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+      // This structure describes the number of queues we want for a single queue family.
+      VkDeviceQueueCreateInfo queueCreateInfo {};
+      queueCreateInfo.sType             = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+      queueCreateInfo.queueFamilyIndex  = indices.graphicsFamily.value();
+      queueCreateInfo.queueCount        = 1;
+
+      /// NOTES
+      /// Vulkan lets you assign priorities to queues to influence the scheduling of command buffer execution 
+      /// using floating point numbers between 0.0 and 1.0. 
+      /// This is required even if there is only a single queue.s
+      float queuePriority = 1.0f;
+      queueCreateInfo.pQueuePriorities = &queuePriority;
+
+      // Specify the set of device features that we'll be using
+      VkPhysicalDeviceFeatures deviceFeatures {};
+
+      // Begin creating the logical device
+      VkDeviceCreateInfo createInfo {};
+      createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+      
+      // Add pointers to the queue creation info and device features structs
+      createInfo.pQueueCreateInfos = &queueCreateInfo;
+      createInfo.queueCreateInfoCount = 1;
+      createInfo.pEnabledFeatures = &deviceFeatures;
+      
+      // Specify extensions (these are device specific)
+      createInfo.enabledExtensionCount = 0;
+      
+      // Specify validation layers (these are device specific)
+      if(enableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+      }
+      else {
+        createInfo.enabledLayerCount = 0;
+      }
+
+      // Instantiate the logical device
+      // This call can return errors based on enabling non-existent extensions or specifying the desired usage of unsupported features.
+      // This device should be destroyed during cleanup
+      if(vkCreateDevice(physicalDevice,                   // the physical device to interface with  
+                        &createInfo,                      // the queue and usage info we just specified
+                        nullptr,                          // the optional allocation callbacks pointer
+                        &logicalDevice) != VK_SUCCESS) {  // a pointer to a variable to store the logical device handle in
+        throw std::runtime_error("failed to create logical device!");
+      }
+
+      // Retrieve a queue handle for the graphics queue family.
+      vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    }
+    //#pragma endregion 
+
+
+    #pragma region Base-code
+    /// Window creation 
+    void initWindow() {
+      glfwInit();  // init GLFW
+
+      glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // not create a window in a OpenGL context
+      glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);    // disable window resizing
+
+      window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+    }
+
+
+    void initVulkan() {
+      createInstance();       // initializes Vulkan library
+      setupDebugMessenger();  // setup error handling
+      pickPhysicalDevice();
+      createLogicalDevice();
+    }
 
 
     /// Resource management
     void cleanup() {
+      vkDestroyDevice(logicalDevice, nullptr);
+
       if(enableValidationLayers) {
         DestroyDebugUtilsMessengerEXT(vkinstance, debugMessenger, nullptr);
       }
@@ -407,6 +480,7 @@ class TriangleApp {
         glfwPollEvents();
       }
     }
+    #pragma endregion
 };
 
 
