@@ -7,8 +7,10 @@
 
 #include <vector>
 #include <cstring>
+#include <cstdint> // Necessary for UINT32_MAX
 #include <set>
 #include <map>
+#include <algorithm>
 #include <optional> // from C++17
 
 
@@ -19,6 +21,11 @@ const uint32_t HEIGHT = 600;
 // config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation" // All of the useful standard validation is bundled into this layer included in the SDK
+};
+
+// config variable to the program to specify the list of required device extensions
+const std::vector<const char*> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 // config variable to the program whether to enable the validation layer or not
@@ -73,11 +80,20 @@ class TriangleApp {
     VkDebugUtilsMessengerEXT  debugMessenger;                   // The debug callback in Vulkan is managed with a handle that needs to be explicitly created and destroyed.
     VkPhysicalDevice          physicalDevice  = VK_NULL_HANDLE; // Implicitly destroyed, therefore need not do anything in cleanup.
     VkDevice                  logicalDevice;                    // A logical device instance. You can create multiple logical devices from the same physical device if you have varying requirements.
+    
+    VkSwapchainKHR            swapChain;                        // Should be destroyed before the logical device
+    std::vector<VkImage>      swapChainImages;                  // To store the handles of the 'VKImage's that will be in the swap chain
+    VkFormat                  swapChainImageFormat;             // Store the swapchain's surface format
+    VkExtent2D                swapChainExtent;                  // Store the swapchain's swap extent
+
     VkQueue                   graphicsQueue;                    // Store a handle to the graphics queue. 
                                                                 // Device queues are implicitly cleaned up when the device is destroyed, so we don't need to do anything in cleanup.
     VkQueue                   presentQueue;                     // The presentation queue handle
+    
     VkSurfaceKHR              surface;                          // Is platform agnostic, but its creation isn't because it depends on window system details
                                                                 // It is destroyed before the application instance.
+    
+
 
     struct QueueFamilyIndices {                                 // To hold info about different kinds of queue families supported by the physical device
       std::optional<uint32_t> graphicsFamily; 
@@ -87,6 +103,21 @@ class TriangleApp {
         // At any point you can query if a std::optional<T> variable contains a value or not by calling its has_value() member function
         return graphicsFamily.has_value() && presentFamily.has_value();
       }
+    };
+
+    /// NOTES
+    /// Simply checking if a swap chain is available is not sufficient, 
+    /// because it may not actually be compatible with our window surface. 
+    /// Creating a swap chain also involves a lot more settings than instance and device creation, 
+    /// so we need to query for some more details before we're able to proceed.
+    /// There are basically three kinds of properties we need to check :
+    /// 1. Basic surface capabilities(min / max number of images in swap chain, min / max width and height of images)
+    /// 2. Surface formats(pixel format, color space)
+    /// 3. Available presentation modes
+    struct SwapChainSupportDetails {
+      VkSurfaceCapabilitiesKHR capabilities;
+      std::vector<VkSurfaceFormatKHR> formats;
+      std::vector<VkPresentModeKHR> presentModes;
     };
     #pragma endregion 
 
@@ -312,6 +343,7 @@ class TriangleApp {
 
 
     /// Evaluate a physical device and check if it is suitable for the operations we want to perform
+    /// i.e. The device can present images to the surface we created.
     bool isDeviceSuitable(VkPhysicalDevice device) {
       // Perform basic device suitability checks - name, type and supported vulkan version
       VkPhysicalDeviceProperties deviceProperties;
@@ -327,8 +359,16 @@ class TriangleApp {
 
       QueueFamilyIndices indices = findQueueFamilies(device);
 
-      // Ensure that a device can present images to the surface we created.
-      return indices.isComplete();
+      bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+      // Verify that swap chain support is adequate, after verifying that the extension is available
+      bool swapChainAdequate = false;
+      if(extensionsSupported) {
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+        swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+      }
+
+      return indices.isComplete() && extensionsSupported && swapChainAdequate;
     }
 
 
@@ -435,7 +475,8 @@ class TriangleApp {
       createInfo.pEnabledFeatures = &deviceFeatures;
       
       // Specify extensions (these are device specific)
-      createInfo.enabledExtensionCount = 0;
+      createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+      createInfo.ppEnabledExtensionNames = deviceExtensions.data();
       
       // Specify validation layers (these are device specific)
       if(enableValidationLayers) {
@@ -494,6 +535,176 @@ class TriangleApp {
     #pragma endregion
 
 
+    #pragma region Swapchain
+    /// Function to enumerate the extensions and check if all of the required extensions are amongst them.
+    /// Using a swapchain requires enabling the VK_KHR_swapchain extension.
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+      uint32_t extensionCount;
+      vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+      std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+      vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+      std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+      for(const auto& extension : availableExtensions) {
+        requiredExtensions.erase(extension.extensionName);
+      }
+
+      return requiredExtensions.empty();
+    }
+
+    /// Function to populate our swapchain struct
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
+      SwapChainSupportDetails details;
+
+      // Query basic surface capabilities
+      // The VkPhysicalDevice and VkSurfaceKHR window surface are the first two parameters because they are the core components of the swap chain.
+      vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+      // Querying the supported surface formats
+      uint32_t formatCount;
+      vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+      if(formatCount != 0) {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+      }
+
+      // Querying the supported presentation modes
+      uint32_t presentModeCount;
+      vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+      if(presentModeCount != 0) {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+      }
+
+      return details;
+    }
+
+    /// NOTES
+    /// Choosing the right settings for the swap chain
+    /// There are three types of settings to determine:
+    /// 1. Surface format(color depth)
+    /// 2. Presentation mode(conditions for "swapping" images to the screen)
+    /// 3. Swap extent(resolution of images in swap chain)
+
+    /// Choose surface format
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+      // Each VkSurfaceFormatKHR entry contains a format and a colorSpace member. 
+      // The format member specifies the color channels and types.
+      // The colorSpace member indicates if the SRGB color space is supported or not
+      for(const auto& availableFormat : availableFormats) {
+        if(availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+          return availableFormat;
+        }
+      }
+      return availableFormats[0];
+    }
+
+    /// Choose presentation mode
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+      // If mailbox mode is available, choose that
+      for(const auto& availablePresentMode : availablePresentModes) {
+        if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+          return availablePresentMode;
+        }
+      }
+      
+      // Else choose fifo mode
+      return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    /// Choose swap extent - the resolution of the swap chain images
+    /// Almost always exactly equal to the resolution of the window that we're drawing to
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+      // Match the resolution of the window by setting the width and height in the currentExtent member.
+      if(capabilities.currentExtent.width != UINT32_MAX) {
+        return capabilities.currentExtent;
+      }
+      else {
+        VkExtent2D actualExtent = {WIDTH, HEIGHT};
+
+        actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
+        actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
+
+        return actualExtent;
+      }
+    }
+
+    /// Function to create the actual swap chain
+    void createSwapChain() {
+      SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+      VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+      VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+      VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+      // Decide how many images we would like to have in the swap chain, 
+      // make sure to not exceed the maximum number of images while doing this.
+      // Here 0 is a special value that means that there is no maximum
+      uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+      if(swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+        imageCount = swapChainSupport.capabilities.maxImageCount;
+      }
+
+      VkSwapchainCreateInfoKHR createInfo {};
+      createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+      createInfo.surface = surface;
+      createInfo.minImageCount = imageCount;
+      createInfo.imageFormat = surfaceFormat.format;
+      createInfo.imageColorSpace = surfaceFormat.colorSpace;
+      createInfo.imageExtent = extent;
+      createInfo.imageArrayLayers = 1; // specifies the amount of layers each image consists of. This is always 1 unless you are developing a stereoscopic 3D application.
+      createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // specifies what kind of operations we'll use the images in the swap chain for.
+
+      QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+      uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+      if(indices.graphicsFamily != indices.presentFamily) {
+        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        createInfo.queueFamilyIndexCount = 2;
+        createInfo.pQueueFamilyIndices = queueFamilyIndices;
+      }
+      else {
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        createInfo.queueFamilyIndexCount = 0; // Optional
+        createInfo.pQueueFamilyIndices = nullptr; // Optional
+      }
+
+      /// NOTES
+      /// We need to specify how to handle swap chain images that will be used across multiple queue families. 
+      /// That will be the case in our application if the graphics queue family is different from the presentation queue
+      /// If the queue families differ, then we'll be using the concurrent mode in this tutorial
+      /// Concurrent mode requires you to specify in advance between which queue families ownership will be shared using the queueFamilyIndexCount and pQueueFamilyIndices parameters. 
+      /// If the graphics queue family and presentation queue family are the same, which will be the case on most hardware, then we should stick to exclusive mode, 
+      /// because concurrent mode requires you to specify at least two distinct queue families.
+      
+      createInfo.preTransform = swapChainSupport.capabilities.currentTransform; //  To specify that you do not want any transformation on images
+      createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // specifies if the alpha channel should be used for blending with other windows in the window system
+      createInfo.presentMode = presentMode;
+      createInfo.clipped = VK_TRUE;
+
+      /// NOTES
+      /// it's possible that your swap chain becomes invalid or unoptimized while your application is running, 
+      /// for example because the window was resized. 
+      /// In that case the swap chain actually needs to be recreated from scratch 
+      /// and a reference to the old one must be specified in this field. 
+      createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+      if(vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create swap chain!");
+      }
+
+      // Retrieving the swapchain images
+      vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
+      swapChainImages.resize(imageCount);
+      vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+
+      // Assign to member variables
+      swapChainImageFormat = surfaceFormat.format;
+      swapChainExtent = extent;
+    }
+    #pragma endregion
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
@@ -513,11 +724,13 @@ class TriangleApp {
       createSurface();        // creates window surface
       pickPhysicalDevice();   // selects a suitable physical device
       createLogicalDevice();  // creates a logical device to interface with the selected physical device
+      createSwapChain();      // create swap chain
     }
 
 
     /// Resource management
     void cleanup() {
+      vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
       vkDestroyDevice(logicalDevice, nullptr);
 
       if(enableValidationLayers) {
