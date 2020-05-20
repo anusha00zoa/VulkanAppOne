@@ -85,6 +85,7 @@ class TriangleApp {
     std::vector<VkImage>      swapChainImages;                  // To store the handles of the 'VKImage's that will be in the swap chain
     VkFormat                  swapChainImageFormat;             // Store the swapchain's surface format
     VkExtent2D                swapChainExtent;                  // Store the swapchain's swap extent
+    std::vector<VkImageView>  swapChainImageViews;              // Store the image views.
 
     VkQueue                   graphicsQueue;                    // Store a handle to the graphics queue. 
                                                                 // Device queues are implicitly cleaned up when the device is destroyed, so we don't need to do anything in cleanup.
@@ -705,6 +706,57 @@ class TriangleApp {
     }
     #pragma endregion
 
+
+    #pragma region Image-views
+    /// NOTES
+    /// To use any 'VkImage', including those in the swap chain, in the render pipeline we have to create a 'VkImageView' object. 
+    /// An image view is quite literally a view into an image. 
+    /// It describes how to access the image and which part of the image to access, 
+    /// for example if it should be treated as a 2D texture depth texture without any mipmapping levels.
+
+    /// A function that creates a basic image view for every image in the swap chain so that we can use them as color targets
+    void createImageViews() {
+      // resize the list to fit all of the image views we'll be creating
+      swapChainImageViews.resize(swapChainImages.size());
+
+      // iterate over all of the swap chain images.
+      for(size_t i = 0; i < swapChainImages.size(); i++) {
+        VkImageViewCreateInfo createInfo {};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = swapChainImages[i];
+        
+        // specify how the image data should be interpreted
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = swapChainImageFormat;
+
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        
+        // describes what the image's purpose is and which part of the image should be accessed
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+
+        /// NOTES
+        /// If you were working on a stereographic 3D application, 
+        /// then you would create a swap chain with multiple layers. 
+        /// You could then create multiple image views for each image 
+        /// representing the views for the left and right eyes by accessing different layers.
+
+        if(vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to create image views!");
+        }
+
+        /// add a similar loop to destroy the image views created now at the end of the program
+      }
+    }
+    #pragma endregion
+
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
@@ -725,11 +777,16 @@ class TriangleApp {
       pickPhysicalDevice();   // selects a suitable physical device
       createLogicalDevice();  // creates a logical device to interface with the selected physical device
       createSwapChain();      // create swap chain
+      createImageViews();     // create the image views
     }
 
 
     /// Resource management
     void cleanup() {
+      for(auto imageView : swapChainImageViews) {
+        vkDestroyImageView(logicalDevice, imageView, nullptr);
+      }
+
       vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
       vkDestroyDevice(logicalDevice, nullptr);
 
