@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h>  // automatically loads vulkan header along with GLFW's own definitions
 
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <cstdlib>
 
@@ -20,7 +21,8 @@ const uint32_t HEIGHT = 600;
 
 // config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
-  "VK_LAYER_KHRONOS_validation" // All of the useful standard validation is bundled into this layer included in the SDK
+  // All of the useful standard validation is bundled into this layer included in the SDK
+  "VK_LAYER_KHRONOS_validation"
 };
 
 // config variable to the program to specify the list of required device extensions
@@ -77,42 +79,59 @@ class TriangleApp {
     #pragma region Class-members
     GLFWwindow*               window;
     VkInstance                vkinstance;
-    VkDebugUtilsMessengerEXT  debugMessenger;                   // The debug callback in Vulkan is managed with a handle that needs to be explicitly created and destroyed.
-    VkPhysicalDevice          physicalDevice  = VK_NULL_HANDLE; // Implicitly destroyed, therefore need not do anything in cleanup.
-    VkDevice                  logicalDevice;                    // A logical device instance. You can create multiple logical devices from the same physical device if you have varying requirements.
-    
-    VkSwapchainKHR            swapChain;                        // Should be destroyed before the logical device
-    std::vector<VkImage>      swapChainImages;                  // To store the handles of the 'VKImage's that will be in the swap chain
-    VkFormat                  swapChainImageFormat;             // Store the swapchain's surface format
-    VkExtent2D                swapChainExtent;                  // Store the swapchain's swap extent
-    std::vector<VkImageView>  swapChainImageViews;              // Store the image views.
 
-    VkQueue                   graphicsQueue;                    // Store a handle to the graphics queue. 
-                                                                // Device queues are implicitly cleaned up when the device is destroyed, so we don't need to do anything in cleanup.
-    VkQueue                   presentQueue;                     // The presentation queue handle
-    
-    VkSurfaceKHR              surface;                          // Is platform agnostic, but its creation isn't because it depends on window system details
-                                                                // It is destroyed before the application instance.
-    
+    // The debug callback in Vulkan is managed with a handle
+    // that needs to be explicitly created and destroyed.
+    VkDebugUtilsMessengerEXT  debugMessenger;  
 
+    // Implicitly destroyed, therefore need not do anything in cleanup.
+    VkPhysicalDevice          physicalDevice  = VK_NULL_HANDLE;
 
-    struct QueueFamilyIndices {                                 // To hold info about different kinds of queue families supported by the physical device
+    // A logical device instance. You can create multiple logical devices from the same physical 
+    // device if you have varying requirements.
+    VkDevice                  logicalDevice;                    
+    
+    // Should be destroyed before the logical device
+    VkSwapchainKHR            swapChain;
+    // To store the handles of the 'VKImage's that will be in the swap chain
+    std::vector<VkImage>      swapChainImages;
+    // Store the swapchain's surface format
+    VkFormat                  swapChainImageFormat;
+    // Store the swapchain's swap extent
+    VkExtent2D                swapChainExtent;
+    // Store the image views.
+    std::vector<VkImageView>  swapChainImageViews;
+
+    // Store a handle to the graphics queue. 
+    // Device queues are implicitly cleaned up when the device is destroyed,
+    // so we don't need to do anything in cleanup.
+    VkQueue                   graphicsQueue;
+    // The presentation queue handle
+    VkQueue                   presentQueue;
+    
+    // Is platform agnostic, but its creation isn't because it depends on window system details
+    // It is destroyed before the application instance.
+    VkSurfaceKHR              surface;                          
+    
+    // To hold info about different kinds of queue families supported by the physical device
+    struct QueueFamilyIndices {                                 
       std::optional<uint32_t> graphicsFamily; 
       std::optional<uint32_t> presentFamily;
 
       bool isComplete() {
-        // At any point you can query if a std::optional<T> variable contains a value or not by calling its has_value() member function
+        // At any point you can query if a std::optional<T> variable contains a value or not 
+        // by calling its has_value() member function
         return graphicsFamily.has_value() && presentFamily.has_value();
       }
     };
 
     /// NOTES
-    /// Simply checking if a swap chain is available is not sufficient, 
-    /// because it may not actually be compatible with our window surface. 
-    /// Creating a swap chain also involves a lot more settings than instance and device creation, 
-    /// so we need to query for some more details before we're able to proceed.
-    /// There are basically three kinds of properties we need to check :
-    /// 1. Basic surface capabilities(min / max number of images in swap chain, min / max width and height of images)
+    /// Simply checking if a swap chain is available is not sufficient, because it may not actually
+    /// be compatible with our window surface. Creating a swap chain also involves a lot more
+    /// settings than instance and device creation, so we need to query for some more details 
+    /// before we're able to proceed.  There are basically 3 kinds of properties we need to check:
+    /// 1. Basic surface capabilities (min / max number of images in swap chain, 
+    ///     min / max width and height of images)
     /// 2. Surface formats(pixel format, color space)
     /// 3. Available presentation modes
     struct SwapChainSupportDetails {
@@ -133,7 +152,8 @@ class TriangleApp {
       appInfo.applicationVersion  = VK_MAKE_VERSION(1, 0, 0); // constructs an API version number.
       appInfo.pEngineName         = "No Engine";
       appInfo.engineVersion       = VK_MAKE_VERSION(1, 0, 0);
-      appInfo.apiVersion          = VK_API_VERSION_1_0;       // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
+      appInfo.apiVersion          = VK_API_VERSION_1_0;
+      // #define VK_API_VERSION_1_0 VK_MAKE_VERSION(1, 0, 0)
 
       // Tells the Vulkan driver which global extensions we want to use
       VkInstanceCreateInfo createInfo {};
@@ -169,7 +189,7 @@ class TriangleApp {
         createInfo.pNext = nullptr;
       }
 
-      VkResult result = vkCreateInstance(&createInfo, nullptr, &vkinstance); // return VK_SUCCESS or an error code
+      VkResult result = vkCreateInstance(&createInfo, nullptr, &vkinstance);
       if(result != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance!");
       }
@@ -183,8 +203,10 @@ class TriangleApp {
       // To retrieve a list of supported extensions
       uint32_t extensionCount = 0;
       vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-      std::vector<VkExtensionProperties> extensions(extensionCount);       // allocate an array to hold the extensions list
-      vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()); // query the extension details
+      // allocate an array to hold the extensions list
+      std::vector<VkExtensionProperties> extensions(extensionCount);
+      // query the extension details
+      vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()); 
 
       std::cout << "\n***** Available extensions *****\n";
       for(const auto& availableExt : extensions) {
@@ -251,12 +273,15 @@ class TriangleApp {
 
     
     /// Debug callback function
-    /// Returns a boolean that indicates if the Vulkan call that triggered the validation layer message should be aborted. 
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, // specifies the severity of the message
-                                                        VkDebugUtilsMessageTypeFlagsEXT messageType,
-                                                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                                                        void* pUserData) {
-      // pUserData: Contains a pointer that was specified during the setup of the callback and allows you to pass your own data to it.
+    /// Returns a boolean that indicates if the Vulkan call that triggered the validation 
+    /// layer message should be aborted. 
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+            VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+            VkDebugUtilsMessageTypeFlagsEXT messageType,
+            const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+            void* pUserData) {
+      // pUserData: Contains a pointer that was specified during the setup of the callback 
+      //              and allows you to pass your own data to it.
       // pMessage: The debug message as a null-terminated string
       // pObjects: Array of Vulkan object handles related to the message
       // objectCount: Number of objects in array
@@ -270,8 +295,12 @@ class TriangleApp {
     void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
       createInfo = {};
       createInfo.sType            = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-      createInfo.messageSeverity  = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-      createInfo.messageType      = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+      createInfo.messageSeverity  = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT 
+                                      | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT 
+                                      | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+      createInfo.messageType      = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT 
+                                    | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT 
+                                    | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
       createInfo.pfnUserCallback  = debugCallback;
       //createInfo.pUserData = nullptr; // Optional
     }
@@ -284,9 +313,9 @@ class TriangleApp {
 
       VkDebugUtilsMessengerCreateInfoEXT createInfo {};
       populateDebugMessengerCreateInfo(createInfo);
-      // This struct should be passed to the vkCreateDebugUtilsMessengerEXT function to create the VkDebugUtilsMessengerEXT object. 
-      // This function is an extension function, it is not automatically loaded. 
-      // We have to look up its address ourselves using vkGetInstanceProcAddr.
+      // This struct should be passed to the vkCreateDebugUtilsMessengerEXT function to create the
+      // VkDebugUtilsMessengerEXT object. This function is an extension function, it is not 
+      // automatically loaded. We have to look up its address using vkGetInstanceProcAddr. 
       // We're going to create our own proxy function that handles this in the background.
 
       // The debug messenger is specific to our Vulkan instance and its layers
@@ -332,7 +361,7 @@ class TriangleApp {
       //  candidates.insert(std::make_pair(score, device));
       //}
 
-      //// Check if the best candidate is suitable at all
+      // // Check if the best candidate is suitable at all
       //if(candidates.rbegin()->first > 0) {
       //  physicalDevice = candidates.rbegin()->second;
       //}
@@ -343,26 +372,29 @@ class TriangleApp {
     }
 
 
-    /// Evaluate a physical device and check if it is suitable for the operations we want to perform
+    /// Evaluate a physical device, check if it is suitable for the operations we want to perform
     /// i.e. The device can present images to the surface we created.
     bool isDeviceSuitable(VkPhysicalDevice device) {
       // Perform basic device suitability checks - name, type and supported vulkan version
       VkPhysicalDeviceProperties deviceProperties;
       vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
-      // Check support for optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
+      // Check support for optional features - texture compression, 64 bit floats 
+      // and multi viewport rendering (useful for VR)
       VkPhysicalDeviceFeatures deviceFeatures;
       vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
-      //// Would return next line if the application were more complex
-      //return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
+      // Would return next line if the application were more complex
       // But for now we just need Vulkan, so any GPU will do
+      //return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
+      //                                        && deviceFeatures.geometryShader;
+      
 
       QueueFamilyIndices indices = findQueueFamilies(device);
 
       bool extensionsSupported = checkDeviceExtensionSupport(device);
 
-      // Verify that swap chain support is adequate, after verifying that the extension is available
+      // Verify that swap chain support is adequate, after verifying that extension is available
       bool swapChainAdequate = false;
       if(extensionsSupported) {
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
@@ -373,7 +405,8 @@ class TriangleApp {
     }
 
 
-    /// OPTIONAL - give each physical device a score and pick the most suitable one, but also have a fallback to an integrated GPU
+    /// OPTIONAL - give each physical device a score and pick the most suitable one, 
+    /// but also have a fallback to an integrated GPU
     int rateDeviceSuitability(VkPhysicalDevice device) {
       int score = 0;
 
@@ -381,7 +414,8 @@ class TriangleApp {
       VkPhysicalDeviceProperties deviceProperties;
       vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
-      // Check support for optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
+      // Check support for optional features like texture compression, 
+      // 64 bit floats and multi viewport rendering (useful for VR)
       VkPhysicalDeviceFeatures deviceFeatures;
       vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
@@ -402,7 +436,8 @@ class TriangleApp {
     }
 
     
-    /// Check which queue families are supported by the device and which one of these supports the commands that we want to use
+    /// Check which queue families are supported by the device and 
+    /// which one of these supports the commands that we want to use
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
       QueueFamilyIndices indices;
 
@@ -410,7 +445,8 @@ class TriangleApp {
       vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
       // The VkQueueFamilyProperties struct contains some details about the queue family
-      // including the type of operations that are supported and the number of queues that can be created based on that family
+      // including the type of operations that are supported and 
+      // the number of queues that can be created based on that family
       std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
       vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
@@ -443,16 +479,19 @@ class TriangleApp {
     void createLogicalDevice() {
       QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-      // VkDeviceQueueCreateInfo is a structure that describes the number of queues we want for a single queue family.
-      // We need to have multiple VkDeviceQueueCreateInfo structs to create a queue from both families. 
-      // An elegant way to do that is to create a set of all unique queue families that are necessary for the required queues
+      // VkDeviceQueueCreateInfo is a structure that describes the number of queues we want for a
+      // single queue family. We need to have multiple VkDeviceQueueCreateInfo structs to create a
+      // queue from both families. An elegant way to do that is to create a set of all unique queue
+      // families that are necessary for the required queues
       std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-      std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+      std::set<uint32_t> uniqueQueueFamilies = {  indices.graphicsFamily.value(), 
+                                                  indices.presentFamily.value()
+                                                };
 
       /// NOTES
-      /// Vulkan lets you assign priorities to queues to influence the scheduling of command buffer execution 
-      /// using floating point numbers between 0.0 and 1.0. 
-      /// This is required even if there is only a single queue.s
+      /// Vulkan lets you assign priorities to queues to influence the scheduling of command buffer
+      /// execution using floating point numbers between 0.0 and 1.0. 
+      /// This is required even if there is only a single queue.
       float queuePriority = 1.0f;
       for(uint32_t queueFamily : uniqueQueueFamilies) {
         VkDeviceQueueCreateInfo queueCreateInfo {};
@@ -489,12 +528,13 @@ class TriangleApp {
       }
 
       // Instantiate the logical device
-      // This call can return errors based on enabling non-existent extensions or specifying the desired usage of unsupported features.
-      // This device should be destroyed during cleanup
-      if(vkCreateDevice(physicalDevice,                   // the physical device to interface with  
-                        &createInfo,                      // the queue and usage info we just specified
-                        nullptr,                          // the optional allocation callbacks pointer
-                        &logicalDevice) != VK_SUCCESS) {  // a pointer to a variable to store the logical device handle in
+      // This call can return errors based on enabling non-existent extensions or specifying the
+      // desired usage of unsupported features. This device should be destroyed during cleanup
+      if(vkCreateDevice(physicalDevice, // the physical device to interface with  
+                        &createInfo,    // the queue and usage info we just specified
+                        nullptr,        // the optional allocation callbacks pointer
+                        &logicalDevice) // pointer to a variable to store the logical device handle
+                        != VK_SUCCESS) {  
         throw std::runtime_error("failed to create logical device!");
       }
 
@@ -507,23 +547,27 @@ class TriangleApp {
 
     #pragma region Window-surface
     /// NOTES
-    /// To establish the connection between Vulkan and the window system to present results to the screen, 
-    /// we need to use the WSI (Window System Integration) extensions
-    /// The surface in our program will be backed by the window that we've already opened with GLFW.
-    /// The window surface needs to be created right after the instance creation, 
-    /// because it can actually influence the physical device selection.
-    /// Window surfaces are an entirely optional component in Vulkan, if you just need off-screen rendering. 
-    /// Vulkan allows you to do that without hacks like creating an invisible window (necessary for OpenGL)
+    /// To establish the connection between Vulkan and the window system to present results to the
+    /// screen, we need to use the WSI (Window System Integration) extensions. The surface in our
+    /// program will be backed by the window that we've already opened with GLFW. The window 
+    /// surface needs to be created right after the instance creation, because it can actually 
+    /// influence the physical device selection. Window surfaces are an entirely optional component
+    /// in Vulkan, if you just need off-screen rendering. Vulkan allows you to do that without 
+    /// hacks like creating an invisible window (necessary for OpenGL)
 
-    /// Using the platform specific extension 'VK_KHR_win32_surface' to create a surface - not needed for this tutorial
+    /// Using the platform specific extension 'VK_KHR_win32_surface' to create a surface
+    /// NOT needed for this tutorial
+    /// 
     /// VkWin32SurfaceCreateInfoKHR createInfo {};
     /// createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    /// createInfo.hwnd = glfwGetWin32Window(window); // used to get the raw HWND from the GLFW window object
-    /// createInfo.hinstance = GetModuleHandle(nullptr); // returns the HINSTANCE handle of the current process.
+    /// createInfo.hwnd = glfwGetWin32Window(window); // get raw HWND from the GLFW window object
+    /// createInfo.hinstance = GetModuleHandle(nullptr); // returns handle of current process
     /// if(vkCreateWin32SurfaceKHR(vkinstance, &createInfo, nullptr, &surface) != VK_SUCCESS) { 
     ///   throw std::runtime_error("failed to create window surface!");
     /// }
-    /// The 'glfwCreateWindowSurface' function performs exactly this operation with a different implementation for each platform.
+    /// 
+    /// The 'glfwCreateWindowSurface' function performs exactly this operation with a different
+    /// implementation for each platform.
 
     void createSurface() {
       if(glfwCreateWindowSurface(vkinstance,                  // the VkInstance
@@ -537,7 +581,7 @@ class TriangleApp {
 
 
     #pragma region Swapchain
-    /// Function to enumerate the extensions and check if all of the required extensions are amongst them.
+    /// Function to enumerate the extensions and check if all required extensions are amongst them.
     /// Using a swapchain requires enabling the VK_KHR_swapchain extension.
     bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
       uint32_t extensionCount;
@@ -560,7 +604,8 @@ class TriangleApp {
       SwapChainSupportDetails details;
 
       // Query basic surface capabilities
-      // The VkPhysicalDevice and VkSurfaceKHR window surface are the first two parameters because they are the core components of the swap chain.
+      // The VkPhysicalDevice and VkSurfaceKHR window surface are the first two parameters 
+      // because they are the core components of the swap chain.
       vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
 
       // Querying the supported surface formats
@@ -595,7 +640,8 @@ class TriangleApp {
       // The format member specifies the color channels and types.
       // The colorSpace member indicates if the SRGB color space is supported or not
       for(const auto& availableFormat : availableFormats) {
-        if(availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        if(availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB 
+            && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
           return availableFormat;
         }
       }
@@ -618,15 +664,17 @@ class TriangleApp {
     /// Choose swap extent - the resolution of the swap chain images
     /// Almost always exactly equal to the resolution of the window that we're drawing to
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
-      // Match the resolution of the window by setting the width and height in the currentExtent member.
+      // Match resolution of the window by setting width and height in the currentExtent member.
       if(capabilities.currentExtent.width != UINT32_MAX) {
         return capabilities.currentExtent;
       }
       else {
         VkExtent2D actualExtent = {WIDTH, HEIGHT};
 
-        actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
-        actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
+        actualExtent.width = std::max(capabilities.minImageExtent.width, 
+                                      std::min(capabilities.maxImageExtent.width, actualExtent.width));
+        actualExtent.height = std::max(capabilities.minImageExtent.height, 
+                                      std::min(capabilities.maxImageExtent.height, actualExtent.height));
 
         return actualExtent;
       }
@@ -640,11 +688,11 @@ class TriangleApp {
       VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
       VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
 
-      // Decide how many images we would like to have in the swap chain, 
-      // make sure to not exceed the maximum number of images while doing this.
-      // Here 0 is a special value that means that there is no maximum
+      // Decide how many images we would like to have in the swap chain, make sure to not exceed 
+      // the maximum number of images while doing this. Here 0 means that there is no maximum.
       uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-      if(swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+      if(swapChainSupport.capabilities.maxImageCount > 0 
+          && imageCount > swapChainSupport.capabilities.maxImageCount) {
         imageCount = swapChainSupport.capabilities.maxImageCount;
       }
 
@@ -655,8 +703,11 @@ class TriangleApp {
       createInfo.imageFormat = surfaceFormat.format;
       createInfo.imageColorSpace = surfaceFormat.colorSpace;
       createInfo.imageExtent = extent;
-      createInfo.imageArrayLayers = 1; // specifies the amount of layers each image consists of. This is always 1 unless you are developing a stereoscopic 3D application.
-      createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // specifies what kind of operations we'll use the images in the swap chain for.
+      // specifies the amount of layers each image consists of. 
+      // This is always 1 unless you are developing a stereoscopic 3D application.
+      createInfo.imageArrayLayers = 1;
+      // specifies what kind of operations we'll use the images in the swap chain for.
+      createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
       QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
       uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
@@ -672,23 +723,27 @@ class TriangleApp {
       }
 
       /// NOTES
-      /// We need to specify how to handle swap chain images that will be used across multiple queue families. 
-      /// That will be the case in our application if the graphics queue family is different from the presentation queue
-      /// If the queue families differ, then we'll be using the concurrent mode in this tutorial
-      /// Concurrent mode requires you to specify in advance between which queue families ownership will be shared using the queueFamilyIndexCount and pQueueFamilyIndices parameters. 
-      /// If the graphics queue family and presentation queue family are the same, which will be the case on most hardware, then we should stick to exclusive mode, 
-      /// because concurrent mode requires you to specify at least two distinct queue families.
+      /// We need to specify how to handle swap chain images that will be used across multiple 
+      /// queue families. That will be the case in our application if the graphics queue family is
+      /// different from the presentation queue. If the queue families differ, then we'll be using
+      /// the concurrent mode in this tutorial. Concurrent mode requires you to specify in advance
+      /// between which queue families ownership will be shared using the queueFamilyIndexCount and
+      /// pQueueFamilyIndices parameters. If the graphics queue family and presentation queue 
+      /// family are the same, which will be the case on most hardware, then we should stick to 
+      /// exclusive mode, because concurrent mode requires you to specify at least two distinct
+      /// queue families.
       
-      createInfo.preTransform = swapChainSupport.capabilities.currentTransform; //  To specify that you do not want any transformation on images
-      createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // specifies if the alpha channel should be used for blending with other windows in the window system
+      // To specify that you do not want any transformation on images
+      createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+      // specifies if alpha channel should be used for blending with other windows in the system
+      createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; 
       createInfo.presentMode = presentMode;
       createInfo.clipped = VK_TRUE;
 
       /// NOTES
-      /// it's possible that your swap chain becomes invalid or unoptimized while your application is running, 
-      /// for example because the window was resized. 
-      /// In that case the swap chain actually needs to be recreated from scratch 
-      /// and a reference to the old one must be specified in this field. 
+      /// it's possible that your swap chain becomes invalid or unoptimized while your application
+      /// is running, for eg. because the window was resized. In that case, the swap chain 
+      /// needs to be recreated from scratch and a reference to the old one must be specified. 
       createInfo.oldSwapchain = VK_NULL_HANDLE;
 
       if(vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
@@ -709,12 +764,13 @@ class TriangleApp {
 
     #pragma region Image-views
     /// NOTES
-    /// To use any 'VkImage', including those in the swap chain, in the render pipeline we have to create a 'VkImageView' object. 
-    /// An image view is quite literally a view into an image. 
-    /// It describes how to access the image and which part of the image to access, 
-    /// for example if it should be treated as a 2D texture depth texture without any mipmapping levels.
+    /// To use any 'VkImage', including those in the swap chain, in the render pipeline we have to 
+    /// create a 'VkImageView' object. An image view is quite literally a view into an image. It 
+    /// describes how to access the image and which part of the image to access, for example if it 
+    /// should be treated as a 2D texture depth texture without any mipmapping levels.
 
-    /// A function that creates a basic image view for every image in the swap chain so that we can use them as color targets
+    /// A function that creates a basic image view for every image in the swap chain 
+    /// so that we can use them as color targets
     void createImageViews() {
       // resize the list to fit all of the image views we'll be creating
       swapChainImageViews.resize(swapChainImages.size());
@@ -742,10 +798,9 @@ class TriangleApp {
         createInfo.subresourceRange.layerCount = 1;
 
         /// NOTES
-        /// If you were working on a stereographic 3D application, 
-        /// then you would create a swap chain with multiple layers. 
-        /// You could then create multiple image views for each image 
-        /// representing the views for the left and right eyes by accessing different layers.
+        /// If you were working on a stereographic 3D app, then you would create a swapchain with
+        /// multiple layers. You could then create multiple image views for each image representing
+        /// the views for the left and right eyes by accessing different layers.
 
         if(vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
           throw std::runtime_error("failed to create image views!");
@@ -754,6 +809,105 @@ class TriangleApp {
         /// add a similar loop to destroy the image views created now at the end of the program
       }
     }
+    #pragma endregion
+
+
+    #pragma region Graphics-pipeline
+    /// A simple helper function to load the binary data from the compiled shader files
+    static std::vector<char> readFile(const std::string& filename) {
+      std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+      if(!file.is_open()) {
+        throw std::runtime_error("failed to open file!");
+      }
+
+      size_t fileSize = (size_t)file.tellg(); // get size of file
+      std::vector<char> buffer(fileSize);
+
+      file.seekg(0);
+      // read all of the bytes from the specified file
+      file.read(buffer.data(), fileSize);
+      file.close();
+
+      // return them in a byte array
+      return buffer;
+    }
+
+
+    /// A helper function to create shader modules
+    /// Shader modules are just a thin wrapper around the shader bytecode 
+    VkShaderModule createShaderModule(const std::vector<char>& code) {
+      VkShaderModuleCreateInfo createInfo {};
+      createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+      createInfo.codeSize = code.size();
+      createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+      VkShaderModule shaderModule;
+      if(vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create shader module!");
+      }
+
+      return shaderModule;
+    }
+
+
+    void createGraphicsPipeline() {
+      // Load the bytecode of the two. Make sure that the shaders are loaded correctly - print the
+      // size of the buffers and check if they match the actual file size in bytes.
+      auto vertShaderCode = readFile("shaders/vert.spv");
+      auto fragShaderCode = readFile("shaders/frag.spv");
+      
+      // initialize the shader module variables
+      VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+      VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+      // To actually use the shaders we'll need to assign them to a specific pipeline stage through
+      // VkPipelineShaderStageCreateInfo structures 
+      // Now, fill in the structure for the vertex shader
+      VkPipelineShaderStageCreateInfo vertShaderStageInfo {};
+      vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+      // telling Vulkan in which pipeline stage the shader is going to be used
+      vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+      vertShaderStageInfo.module = vertShaderModule; // the shader module containing the code
+      vertShaderStageInfo.pName = "main"; // the 'entrypoint' into the code
+      
+      // Now a similar structure for the fragment shader
+      VkPipelineShaderStageCreateInfo fragShaderStageInfo {};
+      fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+      fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+      fragShaderStageInfo.module = fragShaderModule;
+      fragShaderStageInfo.pName = "main";
+
+      VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+      // cleanup of the shader code variables
+      vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+      vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+    }
+
+    /// NOTES on shaders
+    /// Shader code in Vulkan has to be specified in a bytecode format as opposed to human-readable
+    /// syntax like GLSL and HLSL. This bytecode format is called SPIR-V and is designed to be used
+    /// with both Vulkan and OpenCL (both Khronos APIs). The advantage of using a bytecode format
+    /// is that the compilers written by GPU vendors to turn shader code into native code are
+    /// significantly less complex. The past has shown that with human-readable syntax like GLSL,
+    /// some GPU vendors were rather flexible with their interpretation of the standard.
+    ///
+    /// GLSL is a shading language with a C-style syntax. Programs written in it have a main
+    /// function that is invoked for every object. Instead of using parameters for input and a 
+    /// return value as output, GLSL uses global variables to handle input and output.
+    ///
+    /// Vertex shader
+    /// The vertex shader processes each incoming vertex. It takes its attributes, like world 
+    /// position, color, normal and texture coordinates as input. The output is the final position
+    /// in clip coordinates and the attributes that need to be passed on to the fragment shader,
+    /// like color and texture coordinates. These values will then be interpolated over the 
+    /// fragments by the rasterizer to produce a smooth gradient.
+    ///
+    /// A 'clip coordinate' is a 4D vector from the vertex shader that is subsequently turned into
+    /// a normalized device coordinate by dividing the whole vector by its last component. These
+    /// normalized device coordinates are homogeneous coordinates that map the framebuffer to 
+    /// a [-1, 1] by [-1, 1] coordinate system.
     #pragma endregion
 
 
@@ -771,13 +925,14 @@ class TriangleApp {
 
     void initVulkan() {
       // ORDER OF FUNCTION CALLS SHOULD NOT BE CHANGED
-      createInstance();       // initializes Vulkan library
-      setupDebugMessenger();  // setup error handling
-      createSurface();        // creates window surface
-      pickPhysicalDevice();   // selects a suitable physical device
-      createLogicalDevice();  // creates a logical device to interface with the selected physical device
-      createSwapChain();      // create swap chain
-      createImageViews();     // create the image views
+      createInstance();         // initializes Vulkan library
+      setupDebugMessenger();    // setup error handling
+      createSurface();          // creates window surface
+      pickPhysicalDevice();     // selects a suitable physical device
+      createLogicalDevice();    // creates a logical device to interface with the physical device
+      createSwapChain();        // create swap chain
+      createImageViews();       // create the image views
+      createGraphicsPipeline(); // create the graphics pipeline
     }
 
 
@@ -802,7 +957,8 @@ class TriangleApp {
 
 
     void mainLoop() {
-      while(!glfwWindowShouldClose(window)) {  // to keep the window open until it is closed or an error occurs
+      // to keep the window open until it is closed or an error occurs
+      while(!glfwWindowShouldClose(window)) { 
         glfwPollEvents();
       }
     }
