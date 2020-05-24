@@ -38,6 +38,7 @@ const std::vector<const char*> deviceExtensions = {
   const bool enableValidationLayers = true;
 #endif
 
+
 #pragma region Validation-layers-utils
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
                                       const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, 
@@ -107,6 +108,8 @@ class TriangleApp {
     // system details. It is destroyed before the application instance.
     VkSurfaceKHR              surface;
     VkPipelineLayout          pipelineLayout;
+    VkRenderPass              renderPass;
+    VkPipeline                graphicsPipeline;
     
     // To hold info about different kinds of queue families supported by the physical device
     struct QueueFamilyIndices {                                 
@@ -155,7 +158,7 @@ class TriangleApp {
       createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
       createInfo.pApplicationInfo = &appInfo;
 
-      // Next 3 lines of code specify global extensions we want
+      // specify global extensions we want
       auto glfwExtensions = getRequiredExtensions();
       createInfo.enabledExtensionCount = static_cast<uint32_t>(glfwExtensions.size());
       createInfo.ppEnabledExtensionNames = glfwExtensions.data();
@@ -383,7 +386,6 @@ class TriangleApp {
       // But for now we just need Vulkan, so any GPU will do
       //return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
       //                                        && deviceFeatures.geometryShader;
-      
 
       QueueFamilyIndices indices = findQueueFamilies(device);
 
@@ -479,9 +481,10 @@ class TriangleApp {
       // queue from both families. An elegant way to do that is to create a set of all unique queue
       // families that are necessary for the required queues
       std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-      std::set<uint32_t> uniqueQueueFamilies = {  indices.graphicsFamily.value(), 
-                                                  indices.presentFamily.value()
-                                                };
+      std::set<uint32_t> uniqueQueueFamilies = {  
+        indices.graphicsFamily.value(), 
+        indices.presentFamily.value()
+      };
 
       /// NOTES
       /// Vulkan lets you assign priorities to queues to influence the scheduling of command buffer
@@ -1025,6 +1028,37 @@ class TriangleApp {
         throw std::runtime_error("failed to create pipeline layout!");
       }
 
+      // Create the graphics pipeline using everything created above
+      // Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline.
+      // The idea of pipeline derivatives is that it is less expensive to set up pipelines when
+      // they have much functionality in common with an existing pipeline and switching between
+      // pipelines from the same parent can also be done quicker. You can either specify the handle
+      // of an existing pipeline with 'basePipelineHandle' or reference another pipeline that is
+      // about to be created by index with 'basePipelineIndex'.
+      VkGraphicsPipelineCreateInfo pipelineInfo {};
+      pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+      pipelineInfo.stageCount = 2;
+      pipelineInfo.pStages = shaderStages;
+      pipelineInfo.pVertexInputState = &vertexInputInfo;
+      pipelineInfo.pInputAssemblyState = &inputAssembly;
+      pipelineInfo.pViewportState = &viewportState;
+      pipelineInfo.pRasterizationState = &rasterizer;
+      pipelineInfo.pMultisampleState = &multisampling;
+      pipelineInfo.pDepthStencilState = nullptr; // Optional
+      pipelineInfo.pColorBlendState = &colorBlending;
+      pipelineInfo.pDynamicState = nullptr; // Optional
+      pipelineInfo.layout = pipelineLayout;
+      pipelineInfo.renderPass = renderPass;
+      pipelineInfo.subpass = 0;
+      pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+      pipelineInfo.basePipelineIndex = -1; // Optional
+
+      if(vkCreateGraphicsPipelines(logicalDevice, 
+                                  VK_NULL_HANDLE, // an optional VkPipelineCache object. 
+                                  1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create graphics pipeline!");
+      }
+
       // cleanup of the shader code variables
       vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
       vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
@@ -1052,6 +1086,62 @@ class TriangleApp {
     /// a normalized device coordinate by dividing the whole vector by its last component. These
     /// normalized device coordinates are homogeneous coordinates that map the framebuffer to 
     /// a [-1, 1] by [-1, 1] coordinate system.
+
+    /// NOTES on Render Passes
+    /// We need to tell Vulkan about the framebuffer attachments that will be used while rendering.
+    /// We need to specify how many color and depth buffers there will be, how many samples to use
+    /// for each of them and how their contents should be handled throughout the rendering
+    /// operations. All of this information is wrapped in a render pass object.
+    ///
+    /// A single render pass can consist of multiple subpasses. Subpasses are subsequent rendering
+    /// operations that depend on the contents of framebuffers in previous passes, for example a 
+    /// sequence of post-processing effects that are applied one after another. If you group these
+    /// rendering operations into one render pass, then Vulkan is able to reorder the operations 
+    /// and conserve memory bandwidth for possibly better performance. Every subpass references one
+    /// or more of the attachments that we've described using the structure. 
+
+    void createRenderPass() {
+      // A single color buffer attachment represented by one of the images from the swap chain.
+      // The 'format' of the color attachment should match the format of the swap chain images
+      // The 'loadOp' and 'storeOp' determine what to do with the data in the attachment before
+      // rendering and after rendering.
+      // The 'initialLayout' specifies which layout the image will have before the render pass 
+      // begins. The finalLayout specifies the layout to automatically transition to when the 
+      // render pass finishes. Using VK_IMAGE_LAYOUT_UNDEFINED for initialLayout means that we
+      // don't care what previous layout the image was in. We want the image to be ready for 
+      // presentation using the swap chain after rendering, which is why we use 
+      // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR as finalLayout.
+      VkAttachmentDescription colorAttachment {};
+      colorAttachment.format = swapChainImageFormat;
+      colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+      colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+      // Reference to subpass
+      // We intend to use the attachment to function as a color buffer
+      VkAttachmentReference colorAttachmentRef {};
+      colorAttachmentRef.attachment = 0;
+      colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      // Subpass description
+      VkSubpassDescription subpass {};
+      subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+      subpass.colorAttachmentCount = 1;
+      subpass.pColorAttachments = &colorAttachmentRef;
+
+      // Create the render pass object
+      VkRenderPassCreateInfo renderPassInfo {};
+      renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+      renderPassInfo.attachmentCount = 1;
+      renderPassInfo.pAttachments = &colorAttachment;
+      renderPassInfo.subpassCount = 1;
+      renderPassInfo.pSubpasses = &subpass;
+
+      if(vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create render pass!");
+      }
+    }
     #pragma endregion
 
 
@@ -1076,13 +1166,17 @@ class TriangleApp {
       createLogicalDevice();    // creates a logical device to interface with the physical device
       createSwapChain();        // create swap chain
       createImageViews();       // create the image views
+      createRenderPass();       // create the render pass object
       createGraphicsPipeline(); // create the graphics pipeline
     }
 
 
     /// Resource management
     void cleanup() {
+      // DO NOT CHANGE ORDER OF CLEANUP OF RESOURCES
+      vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
       vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+      vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
 
       for(auto imageView : swapChainImageViews) {
         vkDestroyImageView(logicalDevice, imageView, nullptr);
@@ -1113,7 +1207,6 @@ class TriangleApp {
 
 
 int main() {
-  // instance
   TriangleApp app;
 
   try {
