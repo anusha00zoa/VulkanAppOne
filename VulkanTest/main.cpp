@@ -19,6 +19,8 @@
 const uint32_t WIDTH  = 800;
 const uint32_t HEIGHT = 600;
 
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
 // config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
   // All of the useful standard validation is bundled into this layer included in the SDK
@@ -119,7 +121,12 @@ class TriangleApp {
     std::vector<VkCommandBuffer>  commandBuffers;
     // Command buffers will be automatically freed when their command pool is destroyed, so we 
     // don't need an explicit cleanup.
-    
+
+    std::vector<VkSemaphore>      imageAvailableSemaphores;
+    std::vector<VkSemaphore>      renderFinishedSemaphores;
+    size_t                        currentFrame = 0;
+
+
     // To hold info about different kinds of queue families supported by the physical device
     struct QueueFamilyIndices {                                 
       std::optional<uint32_t> graphicsFamily; 
@@ -1139,6 +1146,15 @@ class TriangleApp {
       subpass.colorAttachmentCount = 1;
       subpass.pColorAttachments = &colorAttachmentRef;
 
+      // Subpass dependency
+      VkSubpassDependency dependency {};
+      dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+      dependency.dstSubpass = 0;
+      dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      dependency.srcAccessMask = 0;
+      dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
       // Create the render pass object
       VkRenderPassCreateInfo renderPassInfo {};
       renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1146,6 +1162,8 @@ class TriangleApp {
       renderPassInfo.pAttachments = &colorAttachment;
       renderPassInfo.subpassCount = 1;
       renderPassInfo.pSubpasses = &subpass;
+      renderPassInfo.dependencyCount = 1;
+      renderPassInfo.pDependencies = &dependency;
 
       if(vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
         throw std::runtime_error("failed to create render pass!");
@@ -1317,6 +1335,90 @@ class TriangleApp {
     #pragma endregion
 
 
+    #pragma region Rendering-and-presentation
+    /// NOTES
+    /// This function performs the following operations:
+    /// 1. Acquire an image from the swap chain
+    /// 2. Execute the command buffer with that image as attachment in the framebuffer
+    /// 3. Return the image to the swap chain for presentation
+    /// Each of these events is executed asynchronously, but are set in a single function call.
+    /// The function calls will return before the operations are actually finished and the order of
+    /// execution is also undefined. That is unfortunate, because each of the operations depends on
+    /// the previous one finishing. We are going to synchronize swap chain events using semaphores.
+    /// We'll need one semaphore to signal that an image has been acquired and is ready for
+    /// rendering, and another to signal that rendering has finished and presentation can happen.
+    /// To perform CPU-GPU synchronization, Vulkan offers a second type of synchronization
+    /// primitive called 'fences'.
+    
+    void drawFrame() {
+      // Acquire an image from the swap chain
+      uint32_t imageIndex;
+      vkAcquireNextImageKHR(logicalDevice, swapChain, 
+                            UINT64_MAX, // timeout in nanoseconds for an image to become available
+                            imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+      // Achieve queue submission and synchronization through semaphores
+      VkSubmitInfo submitInfo {};
+      submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+      // The first three parameters specify which semaphores to wait on before execution begins and
+      // in which stage(s) of the pipeline to wait. We want to wait with writing colors to the
+      // image until it's available, so we're specifying the stage of the graphics pipeline that
+      // writes to the color attachment. That means that theoretically the implementation can
+      // already start executing our vertex shader and such while the image is not yet available.
+      VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+      VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+      submitInfo.waitSemaphoreCount = 1;
+      submitInfo.pWaitSemaphores = waitSemaphores;
+      submitInfo.pWaitDstStageMask = waitStages;
+      // The next two parameters specify which command buffers to actually submit for execution. As
+      // mentioned earlier, we should submit the command buffer that binds the swap chain image we
+      // just acquired as color attachment.
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+      VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+      submitInfo.signalSemaphoreCount = 1;
+      submitInfo.pSignalSemaphores = signalSemaphores;
+
+      if(vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+      }
+
+      // Submit the result back to the swap chain
+      VkPresentInfoKHR presentInfo {};
+      VkSwapchainKHR swapChains[] = {swapChain};
+      presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+      presentInfo.waitSemaphoreCount = 1;
+      presentInfo.pWaitSemaphores = signalSemaphores;
+      presentInfo.swapchainCount = 1;
+      presentInfo.pSwapchains = swapChains;
+      presentInfo.pImageIndices = &imageIndex;
+      presentInfo.pResults = nullptr; // Optional
+
+      vkQueuePresentKHR(presentQueue, &presentInfo);
+      vkQueueWaitIdle(presentQueue);
+
+      currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+
+
+    void createSemaphores() {
+      imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+      renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+
+      VkSemaphoreCreateInfo semaphoreInfo {};
+      semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+      for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if(vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+          vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to create semaphores!");
+        }
+      }
+    }
+    #pragma endregion
+
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
@@ -1343,12 +1445,18 @@ class TriangleApp {
       createFramebuffers();     // create the framebuffers for our swapchain images
       createCommandPool();      // create the command pool for our command buffers
       createCommandBuffers();   // create the command buffers
+      createSemaphores();       // create the seamphores for rendering and presentation
     }
 
 
     /// Resource management
     void cleanup() {
       // DO NOT CHANGE ORDER OF CLEANUP OF RESOURCES
+      for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
+        vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+      }
+
       vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
 
       for(auto framebuffer : swapChainFramebuffers) {
@@ -1381,7 +1489,10 @@ class TriangleApp {
       // to keep the window open until it is closed or an error occurs
       while(!glfwWindowShouldClose(window)) { 
         glfwPollEvents();
+        drawFrame();
       }
+
+      vkDeviceWaitIdle(logicalDevice);
     }
     #pragma endregion
 };
