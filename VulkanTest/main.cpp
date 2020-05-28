@@ -124,6 +124,14 @@ class TriangleApp {
 
     std::vector<VkSemaphore>      imageAvailableSemaphores;
     std::vector<VkSemaphore>      renderFinishedSemaphores;
+    std::vector<VkFence>          inFlightFences;
+    /// If MAX_FRAMES_IN_FLIGHT is higher than the number of swap chain images or
+    /// vkAcquireNextImageKHR returns images out-of-order then it's possible that we may start
+    /// rendering to a swap chain image that is already in flight. To avoid this, we need to track
+    /// for each swap chain image if a frame in flight is currently using it. This mapping will
+    /// refer to frames in flight by their fences so we'll immediately have a synchronization 
+    /// object to wait on before a new frame can use that image.
+    std::vector<VkFence>          imagesInFlight;
     size_t                        currentFrame = 0;
 
 
@@ -1348,14 +1356,30 @@ class TriangleApp {
     /// We'll need one semaphore to signal that an image has been acquired and is ready for
     /// rendering, and another to signal that rendering has finished and presentation can happen.
     /// To perform CPU-GPU synchronization, Vulkan offers a second type of synchronization
-    /// primitive called 'fences'.
+    /// primitive called 'fences'. Fences are similar to semaphores in the sense that they can be 
+    /// signaled and waited for, but this time we actually wait for them in our own code. In our
+    /// code in drawFrame, initially we're waiting for a fence that has not been submitted. The
+    /// problem here is that, by default, fences are created in the unsignaled state. That means
+    /// that vkWaitForFences will wait forever if we haven't used the fence before. To solve that,
+    /// we can change the fence creation to initialize it in the signaled state as if we had
+    /// rendered an initial frame that finished.
     
     void drawFrame() {
+      // Wait for the frame to be finished
+      vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
       // Acquire an image from the swap chain
       uint32_t imageIndex;
       vkAcquireNextImageKHR(logicalDevice, swapChain, 
                             UINT64_MAX, // timeout in nanoseconds for an image to become available
                             imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+      // Check if a previous frame is using this image (i.e. there is its fence to wait on)
+      if(imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(logicalDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+      }
+      // Mark the image as now being in use by this frame
+      imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
       // Achieve queue submission and synchronization through semaphores
       VkSubmitInfo submitInfo {};
@@ -1380,7 +1404,8 @@ class TriangleApp {
       submitInfo.signalSemaphoreCount = 1;
       submitInfo.pSignalSemaphores = signalSemaphores;
 
-      if(vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+      vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]);
+      if(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
       }
 
@@ -1401,18 +1426,27 @@ class TriangleApp {
       currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-
-    void createSemaphores() {
+    /// Create the semaphores and fences used in this application
+    void createSyncObjects() {
       imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
       renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+      inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+      imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
 
+      // semaphore info
       VkSemaphoreCreateInfo semaphoreInfo {};
       semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+      // fence info
+      VkFenceCreateInfo fenceInfo {};
+      fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+      fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
       for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         if(vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-          vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
-          throw std::runtime_error("failed to create semaphores!");
+          vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+          vkCreateFence(logicalDevice, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to create synchronization objects for a frame!");
         }
       }
     }
@@ -1445,7 +1479,7 @@ class TriangleApp {
       createFramebuffers();     // create the framebuffers for our swapchain images
       createCommandPool();      // create the command pool for our command buffers
       createCommandBuffers();   // create the command buffers
-      createSemaphores();       // create the seamphores for rendering and presentation
+      createSyncObjects();      // create the semaphores, fences for rendering and presentation
     }
 
 
@@ -1455,6 +1489,7 @@ class TriangleApp {
       for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
       }
 
       vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
