@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <cstdlib>
 
+#include <array>
 #include <vector>
 #include <cstring>
 #include <cstdint> // Necessary for UINT32_MAX
@@ -13,6 +14,8 @@
 #include <map>
 #include <algorithm>
 #include <optional> // from C++17
+
+#include <glm/glm.hpp>
 
 
 // window parameters
@@ -67,6 +70,81 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
   }
 }
 #pragma endregion
+
+
+// To hold info about different kinds of queue families supported by the physical device
+struct QueueFamilyIndices {
+  std::optional<uint32_t> graphicsFamily;
+  std::optional<uint32_t> presentFamily;
+
+  bool isComplete() {
+    // At any point you can query if a std::optional<T> variable contains a value or not 
+    // by calling its has_value() member function
+    return graphicsFamily.has_value() && presentFamily.has_value();
+  }
+};
+
+/// NOTES
+/// Simply checking if a swap chain is available is not sufficient, because it may not actually
+/// be compatible with our window surface. Creating a swap chain also involves a lot more
+/// settings than instance and device creation, so we need to query for some more details 
+/// before we're able to proceed.  There are basically 3 kinds of properties we need to check:
+/// 1. Basic surface capabilities (min / max number of images in swap chain, 
+///     min / max width and height of images)
+/// 2. Surface formats(pixel format, color space)
+/// 3. Available presentation modes
+struct SwapChainSupportDetails {
+  VkSurfaceCapabilitiesKHR capabilities;
+  std::vector<VkSurfaceFormatKHR> formats;
+  std::vector<VkPresentModeKHR> presentModes;
+};
+
+
+struct Vertex {
+  glm::vec2 pos;
+  glm::vec3 color;
+
+  /// A vertex binding describes at which rate to load data from memory throughout the vertices.
+  /// It specifies the number of bytes between data entries and whether to move to the next data
+  /// entry after each vertex or after each instance.
+  static VkVertexInputBindingDescription getBindingDescription() {
+    VkVertexInputBindingDescription bindingDescription {};
+    bindingDescription.binding = 0; // the index of the binding in the array of bindings
+    bindingDescription.stride = sizeof(Vertex); // the number of bytes from one entry to the next
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return bindingDescription;
+  }
+
+  /// An attribute description struct describes how to extract a vertex attribute from a chunk of
+  /// vertex data originating from a binding description. We have two attributes, position and
+  /// color, so we need two attribute description structs.
+  static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions {};
+    // Position attribute
+    attributeDescriptions[0].binding = 0; // from which binding the per-vertex data comes
+    attributeDescriptions[0].location = 0; // references the location directive in vertex shader
+    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; // type of data for the attribute
+                                              // implicitly defines the byte size of attribute data
+    attributeDescriptions[0].offset = offsetof(Vertex, pos); // number of bytes since the start of
+                                                             // the per-vertex data to read from
+
+    // Color attribute
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+    return attributeDescriptions;
+  }
+};
+
+// interleaved vertex attributes here
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {0.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
 
 
 class TriangleApp {
@@ -136,32 +214,9 @@ class TriangleApp {
     // For handling framebuffer resizes explicitly
     bool                          framebufferResized = false;
 
-    // To hold info about different kinds of queue families supported by the physical device
-    struct QueueFamilyIndices {                                 
-      std::optional<uint32_t> graphicsFamily; 
-      std::optional<uint32_t> presentFamily;
-
-      bool isComplete() {
-        // At any point you can query if a std::optional<T> variable contains a value or not 
-        // by calling its has_value() member function
-        return graphicsFamily.has_value() && presentFamily.has_value();
-      }
-    };
-
-    /// NOTES
-    /// Simply checking if a swap chain is available is not sufficient, because it may not actually
-    /// be compatible with our window surface. Creating a swap chain also involves a lot more
-    /// settings than instance and device creation, so we need to query for some more details 
-    /// before we're able to proceed.  There are basically 3 kinds of properties we need to check:
-    /// 1. Basic surface capabilities (min / max number of images in swap chain, 
-    ///     min / max width and height of images)
-    /// 2. Surface formats(pixel format, color space)
-    /// 3. Available presentation modes
-    struct SwapChainSupportDetails {
-      VkSurfaceCapabilitiesKHR capabilities;
-      std::vector<VkSurfaceFormatKHR> formats;
-      std::vector<VkPresentModeKHR> presentModes;
-    };
+    VkBuffer                      vertexBuffer;
+    // Memory bound to the vertex buffer, must be freed after buffer is no longer being used
+    VkDeviceMemory                vertexBufferMemory;
     #pragma endregion 
 
 
@@ -916,10 +971,12 @@ class TriangleApp {
       //      which binding to load them from and at which offset
       VkPipelineVertexInputStateCreateInfo vertexInputInfo {};
       vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-      vertexInputInfo.vertexBindingDescriptionCount = 0;
-      vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-      vertexInputInfo.vertexAttributeDescriptionCount = 0;
-      vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+      auto bindingDescription = Vertex::getBindingDescription();
+      auto attributeDescriptions = Vertex::getAttributeDescriptions();
+      vertexInputInfo.vertexBindingDescriptionCount = 1;
+      vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+      vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+      vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
       // Input assembly
       // Describes two things: what kind of geometry will be drawn from the vertices and 
@@ -1325,18 +1382,23 @@ class TriangleApp {
         // Begin render pass
         vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        // Bind the graphics pipeline
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+          // Bind the graphics pipeline
+          vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-        // Issue draw command
-        // It has the following parameters, aside from the command buffer:
-        // 1. vertexCount: We don't have a vertex buffer, but we have 3 vertices to draw.
-        // 2. instanceCount : Used for instanced rendering, use 1 if you're not doing that.
-        // 3. firstVertex : Used as an offset into the vertex buffer, defines the lowest value of
-        //    gl_VertexIndex.
-        // 4. firstInstance : Used as an offset for instanced rendering, defines the lowest value
-        //    of gl_InstanceIndex.
-        vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+          // Bind the vertex buffer during rendering operations
+          VkBuffer vertexBuffers[] = {vertexBuffer};
+          VkDeviceSize offsets[] = {0};
+          vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+          // Issue draw command
+          // It has the following parameters, aside from the command buffer:
+          // 1. vertexCount: We don't have a vertex buffer, but we have 3 vertices to draw.
+          // 2. instanceCount : Used for instanced rendering, use 1 if you're not doing that.
+          // 3. firstVertex : Used as an offset into the vertex buffer, defines the lowest value of
+          //    gl_VertexIndex.
+          // 4. firstInstance : Used as an offset for instanced rendering, defines the lowest value
+          //    of gl_InstanceIndex.
+          vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
         // End render pass
         vkCmdEndRenderPass(commandBuffers[i]);
@@ -1551,13 +1613,103 @@ class TriangleApp {
     #pragma endregion
 
 
+    #pragma region Vertex-Buffers
+    /// NOTES on Buffers
+    /// Buffers in Vulkan are regions of memory used for storing arbitrary data that can be read by
+    /// the graphics card, but buffers do not automatically allocate memory for themselves.
+    void createVertexBuffer() {
+      VkBufferCreateInfo bufferInfo {};
+      bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      bufferInfo.size = sizeof(vertices[0]) * vertices.size(); // size of the buffer in bytes
+      // 'usage' indicates for which purposes the data in the buffer is going to be used. It is 
+      // possible to specify multiple purposes using a bitwise or.
+      bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+      // Buffers can also be owned by a specific queue family or be shared between multiple.
+      // This buffer will only be used from the graphics queue.
+      bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+      if(vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create vertex buffer!");
+      }
+
+      // Query the memory requirements for the buffer
+      VkMemoryRequirements memRequirements;
+      vkGetBufferMemoryRequirements(logicalDevice, vertexBuffer, &memRequirements);
+
+      // Memory allocation
+      VkMemoryAllocateInfo allocInfo {};
+      allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      allocInfo.allocationSize = memRequirements.size;
+      allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+                                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+                                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+      if(vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate vertex buffer memory!");
+      }
+
+      // Now associate this memory with the buffer
+      // The fourth parameter (in the function) is the offset within the region of memory
+      vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
+
+      // Copy the vertex data to the buffer, one by mapping the buffer memory into CPU accessible
+      // memory with vkMapMemory
+      void* data;
+      vkMapMemory(logicalDevice, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+        memcpy(data, vertices.data(), (size_t)bufferInfo.size);
+      vkUnmapMemory(logicalDevice, vertexBufferMemory);
+
+      // The driver may not immediately copy the data into the buffer memory, for example because
+      // of caching. It is also possible that writes to the buffer are not visible in the mapped
+      // memory yet. There are two ways to deal with that problem:
+      // 1. Use a memory heap that is host coherent - with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+      // 2. Call vkFlushMappedMemoryRanges after writing to the mapped memory, and call 
+      //    vkInvalidateMappedMemoryRanges before reading from the mapped memory
+      // Flushing memory ranges or using a coherent memory heap means that the driver will be aware
+      // of our writes to the buffer, but it doesn't mean that they are actually visible on the GPU
+      // yet. The transfer of data to the GPU is an operation that happens in the background and
+      // the specification simply tells us that it is guaranteed to be complete as of the next call
+      // to vkQueueSubmit.
+    }
+
+    /// Function to find the right type of memory to use by combining the requirements of the
+    /// buffer and our own application requirements.
+    /// The VkPhysicalDeviceMemoryProperties structure has 2 arrays memoryTypes and memoryHeaps.
+    /// Memory heaps are distinct memory resources like dedicated VRAM and swap space in RAM for
+    /// when VRAM runs out. The different types of memory exist within these heaps.
+    /// The memoryTypes array consists of VkMemoryType structs that specify the heap and
+    /// properties of each type of memory.
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+      // Query info about the available types of memory
+      VkPhysicalDeviceMemoryProperties memProperties;
+      vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+      // The typeFilter parameter - specifies the bit field of memory types that are suitable.
+      // So we can find the index of a suitable memory type by simply iterating over them and
+      // checking if the corresponding bit is set to 1
+      // We may have more than one desirable property, so we should check if the result of the
+      // bitwise AND is not just non-zero, but equal to the desired properties bit field. If there
+      // is a memory type suitable for the buffer that also has all of the properties we need, then
+      // we return its index, otherwise we throw an exception.
+      for(uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if((typeFilter & (1 << i)) && 
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+          return i;
+        }
+      }
+
+      throw std::runtime_error("failed to find suitable memory type!");
+    }
+    #pragma endregion
+
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
       glfwInit(); // init GLFW
 
       glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // not create a window in a OpenGL context
-      glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);    // disable window resizing
+      //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);    // disable window resizing
 
       window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
       glfwSetWindowUserPointer(window, this);
@@ -1579,6 +1731,7 @@ class TriangleApp {
       createGraphicsPipeline(); // create the graphics pipeline
       createFramebuffers();     // create the framebuffers for our swapchain images
       createCommandPool();      // create the command pool for our command buffers
+      createVertexBuffer();     // create the vertex buffer
       createCommandBuffers();   // create the command buffers
       createSyncObjects();      // create the semaphores, fences for rendering and presentation
     }
@@ -1587,16 +1740,18 @@ class TriangleApp {
     /// Resource management
     void cleanup() {
       // DO NOT CHANGE ORDER OF CLEANUP OF RESOURCES
+      cleanupSwapchain();
+
+      vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
+      vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
+
       for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
       }
 
-      cleanupSwapchain();
-
       vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
-
       vkDestroyDevice(logicalDevice, nullptr);
 
       if(enableValidationLayers) {
