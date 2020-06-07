@@ -141,9 +141,18 @@ struct Vertex {
 
 // interleaved vertex attributes here
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    // CW order
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}}, // top left
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}}, // top right
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}, // bottom right
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}} // bottom left
+};
+
+
+// contents of the index buffer
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 
+    2, 3, 0
 };
 
 
@@ -217,6 +226,8 @@ class TriangleApp {
     VkBuffer                      vertexBuffer;
     // Memory bound to the vertex buffer, must be freed after buffer is no longer being used
     VkDeviceMemory                vertexBufferMemory;
+    VkBuffer                      indexBuffer;
+    VkDeviceMemory                indexBufferMemory;
     #pragma endregion 
 
 
@@ -1390,6 +1401,9 @@ class TriangleApp {
           VkDeviceSize offsets[] = {0};
           vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
+          // Bind the index buffers
+          vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
           // Issue draw command
           // It has the following parameters, aside from the command buffer:
           // 1. vertexCount: We don't have a vertex buffer, but we have 3 vertices to draw.
@@ -1398,7 +1412,10 @@ class TriangleApp {
           //    gl_VertexIndex.
           // 4. firstInstance : Used as an offset for instanced rendering, defines the lowest value
           //    of gl_InstanceIndex.
-          vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+          //vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+          // Use the indexed draw command now
+          vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
         // End render pass
         vkCmdEndRenderPass(commandBuffers[i]);
@@ -1613,7 +1630,7 @@ class TriangleApp {
     #pragma endregion
 
 
-    #pragma region Vertex-Buffers
+    #pragma region Vertex-and-Index-Buffers
     /// NOTES on Buffers
     /// Buffers in Vulkan are regions of memory used for storing arbitrary data that can be read by
     /// the graphics card, but buffers do not automatically allocate memory for themselves.
@@ -1740,6 +1757,31 @@ class TriangleApp {
       vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
     }
 
+
+    void createIndexBuffer() {
+      VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+      VkBuffer stagingBuffer;
+      VkDeviceMemory stagingBufferMemory;
+      createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+                    stagingBuffer, stagingBufferMemory);
+
+      void* data;
+      vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+      memcpy(data, indices.data(), (size_t)bufferSize);
+      vkUnmapMemory(logicalDevice, stagingBufferMemory);
+
+      createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+      copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+      vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+      vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
+    }
+
+
     /// Function to find the right type of memory to use by combining the requirements of the
     /// buffer and our own application requirements.
     /// The VkPhysicalDeviceMemoryProperties structure has 2 arrays memoryTypes and memoryHeaps.
@@ -1800,6 +1842,7 @@ class TriangleApp {
       createFramebuffers();     // create the framebuffers for our swapchain images
       createCommandPool();      // create the command pool for our command buffers
       createVertexBuffer();     // create the vertex buffer
+      createIndexBuffer();      // create the index buffer
       createCommandBuffers();   // create the command buffers
       createSyncObjects();      // create the semaphores, fences for rendering and presentation
     }
@@ -1809,6 +1852,9 @@ class TriangleApp {
     void cleanup() {
       // DO NOT CHANGE ORDER OF CLEANUP OF RESOURCES
       cleanupSwapchain();
+
+      vkDestroyBuffer(logicalDevice, indexBuffer, nullptr);
+      vkFreeMemory(logicalDevice, indexBufferMemory, nullptr);
 
       vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
       vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
