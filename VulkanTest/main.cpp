@@ -252,6 +252,9 @@ class TriangleApp {
 
     VkImage                       textureImage;
     VkDeviceMemory                textureImageMemory;
+    // Destroyed before the image itself
+    VkImageView                   textureImageView;
+    VkSampler                     textureSampler;
     #pragma endregion 
 
 
@@ -513,7 +516,11 @@ class TriangleApp {
         swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
       }
 
-      return indices.isComplete() && extensionsSupported && swapChainAdequate;
+      // Verify that anisotropic filtering is supported
+      VkPhysicalDeviceFeatures supportedFeatures;
+      vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+
+      return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
     }
 
 
@@ -617,6 +624,7 @@ class TriangleApp {
 
       // Specify the set of device features that we'll be using
       VkPhysicalDeviceFeatures deviceFeatures {};
+      deviceFeatures.samplerAnisotropy = VK_TRUE;
 
       // Begin creating the logical device
       VkDeviceCreateInfo createInfo {};
@@ -896,36 +904,38 @@ class TriangleApp {
 
       // iterate over all of the swap chain images.
       for(size_t i = 0; i < swapChainImages.size(); i++) {
-        VkImageViewCreateInfo createInfo {};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = swapChainImages[i];
-        
-        // specify how the image data should be interpreted
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = swapChainImageFormat;
+        swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
 
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        
-        // describes what the image's purpose is and which part of the image should be accessed
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-
-        /// NOTES
-        /// If you were working on a stereographic 3D app, then you would create a swapchain with
-        /// multiple layers. You could then create multiple image views for each image representing
-        /// the views for the left and right eyes by accessing different layers.
-
-        if(vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-          throw std::runtime_error("failed to create image views!");
-        }
-
-        /// add a similar loop to destroy the image views created now at the end of the program
+        //VkImageViewCreateInfo createInfo {};
+        //createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        //createInfo.image = swapChainImages[i];
+        //
+        //// specify how the image data should be interpreted
+        //createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        //createInfo.format = swapChainImageFormat;
+        //
+        //createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        //createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        //createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        //createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        //
+        //// describes what the image's purpose is and which part of the image should be accessed
+        //createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        //createInfo.subresourceRange.baseMipLevel = 0;
+        //createInfo.subresourceRange.levelCount = 1;
+        //createInfo.subresourceRange.baseArrayLayer = 0;
+        //createInfo.subresourceRange.layerCount = 1;
+        //
+        ///// NOTES
+        ///// If you were working on a stereographic 3D app, then you would create a swapchain with
+        ///// multiple layers. You could then create multiple image views for each image representing
+        ///// the views for the left and right eyes by accessing different layers.
+        //
+        //if(vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+        //  throw std::runtime_error("failed to create image views!");
+        //}
+        //
+        ///// add a similar loop to destroy the image views created now at the end of the program
       }
     }
     #pragma endregion
@@ -2304,6 +2314,97 @@ class TriangleApp {
 
       endSingleTimeCommands(commandBuffer);
     }
+
+
+    /// NOTES on Samplers
+    /// Textures are usually accessed through samplers, which will apply filtering and
+    /// transformations to compute the final color that is retrieved. These filters are helpful to
+    /// deal with problems like oversampling, which is preferred in conventional graphics
+    /// applications. A sampler object automatically applies this filtering for you when reading a
+    /// color from the texture. Undersampling is the opposite problem, where you have more texels
+    /// than fragments. This will lead to artifacts when sampling high frequency patterns like a
+    /// checkerboard texture at a sharp angle. The solution to this is 'anisotropic filtering',
+    /// which can also be applied automatically by a sampler.
+    
+    /// Function to create a sampler object
+    void createTextureSampler() {
+      VkSamplerCreateInfo samplerInfo {};
+      samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+      // Specify how to interpolate texels that are magnified or minified, magnification concerns
+      // the oversampling problem describes above, and minification concerns undersampling.
+      samplerInfo.magFilter = VK_FILTER_LINEAR;
+      samplerInfo.minFilter = VK_FILTER_LINEAR;
+      // The addressing mode can be specified per axis using the 'addressMode' fields
+      samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      // Specify if anisotropic filtering should be used.
+      // Anisotropic filtering is actually an optional device feature. We need to update the
+      // 'createLogicalDevice' function to request it and we should update 'isDeviceSuitable' to
+      // check if it is available
+      samplerInfo.anisotropyEnable = VK_TRUE;
+      // Limits the amount of texel samples that can be used to calculate the final color. A lower
+      // value results in better performance, but lower quality results. There is no graphics
+      // hardware available today that will use more than 16 samples, because the difference is
+      // negligible beyond that point.
+      samplerInfo.maxAnisotropy = 16.0f;
+      // Specifies which color is returned when sampling beyond the image with clamp to border
+      // addressing mode. It is possible to return black, white or transparent in either float or
+      // int formats. You cannot specify an arbitrary color.
+      samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+      // Specifies which coordinate system you want to use to address texels in an image. If this
+      // field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and 
+      // [0, texHeight) range. If it is VK_FALSE, then the texels are addressed using the [0, 1)
+      // range on all axes. Real-world applications almost always use normalized coordinates,
+      // because then it's possible to use a variety of textures with the exact same coordinates.
+      samplerInfo.unnormalizedCoordinates = VK_FALSE;
+      // If a comparison function is enabled, then texels will first be compared to a value, and
+      // the result of that comparison is used in filtering operations. This is mainly used for
+      // percentage-closer filtering on shadow maps.
+      samplerInfo.compareEnable = VK_FALSE;
+      samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+      // Mipmapping
+      samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+      samplerInfo.mipLodBias = 0.0f;
+      samplerInfo.minLod = 0.0f;
+      samplerInfo.maxLod = 0.0f;
+
+      if(vkCreateSampler(logicalDevice, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture sampler!");
+      }
+
+      // The sampler does not reference a VkImage anywhere. The sampler is a distinct object that
+      // provides an interface to extract colors from a texture. It can be applied to any image you
+      // want, whether it is 1D, 2D or 3D. This is different from many older APIs, which combined
+      // texture images and filtering into a single state.
+    }
+
+    /// Function to create an image view for our texture
+    void createTextureImageView() {
+      textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+    }
+
+
+    /// Helper function to create image views
+    VkImageView createImageView(VkImage image, VkFormat format) {
+      VkImageViewCreateInfo viewInfo {};
+      viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      viewInfo.image = image;
+      viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      viewInfo.format = format;
+      viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      viewInfo.subresourceRange.baseMipLevel = 0;
+      viewInfo.subresourceRange.levelCount = 1;
+      viewInfo.subresourceRange.baseArrayLayer = 0;
+      viewInfo.subresourceRange.layerCount = 1;
+
+      VkImageView imageView;
+      if(vkCreateImageView(logicalDevice, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture image view!");
+      }
+
+      return imageView;
+    }
     #pragma endregion
 
 
@@ -2337,6 +2438,8 @@ class TriangleApp {
       createFramebuffers();         // create the framebuffers for our swapchain images
       createCommandPool();
       createTextureImage();         // uses command buffers, hence called after createCommandPool
+      createTextureImageView();
+      createTextureSampler();
       createVertexBuffer();
       createIndexBuffer();
       createUniformBuffers();
@@ -2352,6 +2455,8 @@ class TriangleApp {
       // DO NOT CHANGE ORDER OF CLEANUP OF RESOURCES
       cleanupSwapchain();
 
+      vkDestroySampler(logicalDevice, textureSampler, nullptr);
+      vkDestroyImageView(logicalDevice, textureImageView, nullptr);
       vkDestroyImage(logicalDevice, textureImage, nullptr);
       vkFreeMemory(logicalDevice, textureImageMemory, nullptr);
 
