@@ -2,12 +2,11 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 // The vertex shader takes input from a vertex buffer using the in keyword.
-layout(location = 0) in vec2 inPosition; // vertex position attribute
+layout(location = 0) in vec3 inPosition; // vertex position attribute
 layout(location = 1) in vec3 inColor; // vertex color attribute
 
 layout(location = 0) out vec3 fragColor;
 
-// The binding directive is similar to the location directive for attributes
 layout(binding = 0) uniform UniformBufferObject {
   // each mat4 is 4x4x4 = 64 bytes
   mat4 model;
@@ -16,8 +15,7 @@ layout(binding = 0) uniform UniformBufferObject {
 } ubo;
 
 void main() {
-  // Compute the final position in homogeneous coordinates
-  gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPosition, 0.0, 1.0);
+  gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPosition, 1.0);
   fragColor = inColor;
 }
 
