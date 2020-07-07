@@ -112,6 +112,7 @@ struct SwapChainSupportDetails {
 struct Vertex {
   glm::vec3 pos;
   glm::vec3 color;
+  glm::vec2 texCoord;
 
   /// A vertex binding describes at which rate to load data from memory throughout the vertices.
   /// It specifies the number of bytes between data entries and whether to move to the next data
@@ -128,8 +129,8 @@ struct Vertex {
   /// An attribute description struct describes how to extract a vertex attribute from a chunk of
   /// vertex data originating from a binding description. We have two attributes, position and
   /// color, so we need two attribute description structs.
-  static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions {};
+  static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions {};
     // Position attribute
     attributeDescriptions[0].binding = 0; // from which binding the per-vertex data comes
     attributeDescriptions[0].location = 0; // references the location directive in vertex shader
@@ -144,6 +145,12 @@ struct Vertex {
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[1].offset = offsetof(Vertex, color);
 
+    // TexCoord attribute
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
     return attributeDescriptions;
   }
 };
@@ -151,10 +158,10 @@ struct Vertex {
 // interleaved vertex attributes here
 const std::vector<Vertex> vertices = {
     // CCW order of vertex data
-    {{-0.15, -0.15f, 0.0f}, {1.0f, 0.0f, 0.0f}}, // bottom left
-    {{0.15f, -0.15f, 0.0f}, {0.0f, 1.0f, 0.0f}}, // bottom right
-    {{0.15f, 0.15f, 0.0f}, {0.0f, 0.0f, 1.0f}},  // top right
-    {{-0.15f, 0.15f, 0.0f}, {1.0f, 1.0f, 1.0f}}  // top left
+  {{-0.15, -0.15f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}}, // bottom left
+  {{0.15f, -0.15f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}}, // bottom right
+  {{0.15f, 0.15f, 0.0f},  {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},  // top right
+  {{-0.15f, 0.15f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}  // top left
 };
 
 
@@ -1872,10 +1879,21 @@ class TriangleApp {
       // only relevant for image sampling related descriptors, therefore optional
       uboLayoutBinding.pImmutableSamplers = nullptr;
 
+      // Combined image sampler
+      VkDescriptorSetLayoutBinding samplerLayoutBinding {};
+      samplerLayoutBinding.binding = 1;
+      samplerLayoutBinding.descriptorCount = 1;
+      samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      samplerLayoutBinding.pImmutableSamplers = nullptr;
+      // we intend to use the combined image sampler descriptor in the fragment shader
+      samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+      std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
       VkDescriptorSetLayoutCreateInfo layoutInfo {};
       layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-      layoutInfo.bindingCount = 1;
-      layoutInfo.pBindings = &uboLayoutBinding;
+      layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+      layoutInfo.pBindings = bindings.data();
+
       if(vkCreateDescriptorSetLayout(logicalDevice, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
       }
@@ -1951,14 +1969,16 @@ class TriangleApp {
     /// This function will set it up.
     void createDescriptorPool() {
       // Describe which descriptor types our descriptor sets are going to contain and how many
-      VkDescriptorPoolSize poolSize {};
-      poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-      poolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+      std::array<VkDescriptorPoolSize, 2> poolSizes {};
+      poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+      poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
       VkDescriptorPoolCreateInfo poolInfo {};
       poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-      poolInfo.poolSizeCount = 1;
-      poolInfo.pPoolSizes = &poolSize;
+      poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+      poolInfo.pPoolSizes = poolSizes.data();
       // Specify the maximum number of descriptor sets that may be allocated
       poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
       // Optional flag similar to command pools that determines if individual descriptor sets can
@@ -1999,18 +2019,31 @@ class TriangleApp {
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(UniformBufferObject);
 
-        VkWriteDescriptorSet descriptorWrite {};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = descriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pBufferInfo = &bufferInfo;
-        descriptorWrite.pImageInfo = nullptr; // Optional
-        descriptorWrite.pTexelBufferView = nullptr; // Optional
+        VkDescriptorImageInfo imageInfo {};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = textureImageView;
+        imageInfo.sampler = textureSampler;
 
-        vkUpdateDescriptorSets(logicalDevice, 1, &descriptorWrite, 0, nullptr);
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites {};
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].dstSet = descriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
+        descriptorWrites[0].pImageInfo = nullptr; // Optional
+        descriptorWrites[0].pTexelBufferView = nullptr; // Optional
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = descriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), 
+                                descriptorWrites.data(), 0, nullptr);
       }
     }
     #pragma endregion
@@ -2326,6 +2359,7 @@ class TriangleApp {
     /// checkerboard texture at a sharp angle. The solution to this is 'anisotropic filtering',
     /// which can also be applied automatically by a sampler.
     
+
     /// Function to create a sampler object
     void createTextureSampler() {
       VkSamplerCreateInfo samplerInfo {};
@@ -2378,6 +2412,16 @@ class TriangleApp {
       // want, whether it is 1D, 2D or 3D. This is different from many older APIs, which combined
       // texture images and filtering into a single state.
     }
+
+
+    /// NOTES on Combined Image Sampler
+    /// A new type of descriptor which makes it possible for shaders to access an image resource
+    /// through a sampler object.
+    /// Modify the descriptor layout, descriptor pool and descriptor set to include such a combined
+    /// image sampler descriptor. After that, add texture coordinates to 'Vertex' and modify the 
+    /// fragment shader to read colors from the texture instead of just interpolating the vertex
+    /// colors.
+
 
     /// Function to create an image view for our texture
     void createTextureImageView() {

@@ -4,8 +4,10 @@
 // The vertex shader takes input from a vertex buffer using the in keyword.
 layout(location = 0) in vec3 inPosition; // vertex position attribute
 layout(location = 1) in vec3 inColor; // vertex color attribute
+layout(location = 2) in vec2 inTexCoord; // vertec texCoord attribute
 
 layout(location = 0) out vec3 fragColor;
+layout(location = 1) out vec2 fragTexCoord;
 
 layout(binding = 0) uniform UniformBufferObject {
   // each mat4 is 4x4x4 = 64 bytes
@@ -17,6 +19,7 @@ layout(binding = 0) uniform UniformBufferObject {
 void main() {
   gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPosition, 1.0);
   fragColor = inColor;
+  fragTexCoord = inTexCoord;
 }
 
 /// NOTES on Alignment Requirements
