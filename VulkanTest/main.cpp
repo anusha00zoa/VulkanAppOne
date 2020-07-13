@@ -7,10 +7,15 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 // add this line to avoid linker errors
 #define STB_IMAGE_IMPLEMENTATION 
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
 #include <algorithm>
 #include <array>
@@ -24,6 +29,7 @@
 #include <optional> // from C++17
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 
@@ -31,6 +37,9 @@
 const uint32_t  WIDTH                 = 800;
 const uint32_t  HEIGHT                = 600;
 const int       MAX_FRAMES_IN_FLIGHT  = 2;
+
+const std::string MODEL_PATH          = "models/viking_room.obj";
+const std::string TEXTURE_PATH        = "textures/viking_room.png";
 
 // config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
@@ -157,34 +166,48 @@ struct Vertex {
 
     return attributeDescriptions;
   }
+
+  bool operator==(const Vertex& other) const {
+    return pos == other.pos && color == other.color && texCoord == other.texCoord;
+  }
 };
 
-// interleaved vertex attributes here
-const std::vector<Vertex> vertices = {
-  // quad one
-  // CCW order of vertex data
-  // position               color               texCoord
-  {{-0.15f, -0.15f, 0.0f},  {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 0 - bottom left
-  {{0.15f, -0.15f, 0.0f},   {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 1 - bottom right
-  {{0.15f, 0.15f, 0.0f},    {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 2 - top right
-  {{-0.15f, 0.15f, 0.0f},   {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}, // 3 - top left
+namespace std {
+  template<> struct hash<Vertex> {
+    size_t operator()(Vertex const& vertex) const {
+      return ((hash<glm::vec3>()(vertex.pos) ^
+              (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+              (hash<glm::vec2>()(vertex.texCoord) << 1);
+    }
+  };
+}
 
-  // quad two
-  {{-0.15f, -0.15f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 4
-  {{0.15f, -0.15f, -0.5f},  {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 5
-  {{0.15f, 0.15f, -0.5f},   {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 6
-  {{-0.15f, 0.15f, -0.5f},  {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}  // 7
-};
+//// interleaved vertex attributes here
+//const std::vector<Vertex> vertices = {
+//  // quad one
+//  // CCW order of vertex data
+//  // position               color               texCoord
+//  {{-0.15f, -0.15f, 0.0f},  {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 0 - bottom left
+//  {{0.15f, -0.15f, 0.0f},   {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 1 - bottom right
+//  {{0.15f, 0.15f, 0.0f},    {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 2 - top right
+//  {{-0.15f, 0.15f, 0.0f},   {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}, // 3 - top left
+//
+//  // quad two
+//  {{-0.15f, -0.15f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 4
+//  {{0.15f, -0.15f, -0.5f},  {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 5
+//  {{0.15f, 0.15f, -0.5f},   {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 6
+//  {{-0.15f, 0.15f, -0.5f},  {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}  // 7
+//};
 
 
-// contents of the index buffer
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 
-    2, 3, 0,
-
-    4, 5, 6,
-    6, 7, 4
-};
+//// contents of the index buffer
+//const std::vector<uint16_t> indices = {
+//    0, 1, 2, 
+//    2, 3, 0,
+//
+//    4, 5, 6,
+//    6, 7, 4
+//};
 
 
 // Define the Uniform Buffer Object for the descriptor
@@ -281,6 +304,9 @@ class TriangleApp {
     VkImage                       depthImage;
     VkDeviceMemory                depthImageMemory;
     VkImageView                   depthImageView;
+
+    std::vector<Vertex>           vertices;
+    std::vector<uint32_t>         indices;
     #pragma endregion 
 
 
@@ -1516,7 +1542,7 @@ class TriangleApp {
           vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
           // Bind the index buffers
-          vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+          vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
           // Bind the right descriptor set for each swap chain image to the descriptors in the shader
           vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
@@ -2007,9 +2033,9 @@ class TriangleApp {
 
       // View the geometry
       //ubo.view = glm::mat4(1.0f);
-      ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 1.0f), // eye position
+      ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), // eye position
                             glm::vec3(0.0f, 0.0f, 0.0f),  // center position
-                            glm::vec3(0.0f, 1.0f, 0.0f)); // up axis
+                            glm::vec3(0.0f, 0.0f, 1.0f)); // up axis
 
       /*const glm::mat4 clip(1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, -1.0f, 0.0f, 0.0f,
@@ -2157,7 +2183,8 @@ class TriangleApp {
       
       // STBI_rgb_alpha forces the image to be loaded with an alpha channel, even if it doesn't
       // have one, which is nice for consistency with other textures in the future.
-      stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+      stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+      
       // The pointer that is returned by stbi_load is the first element in an array of pixel 
       // values. The pixels are laid out row by row with 4 bytes per pixel in the case of 
       // STBI_rgb_alpha for a total of texWidth * texHeight * 4 values.
@@ -2644,6 +2671,89 @@ class TriangleApp {
     #pragma endregion
 
 
+    #pragma region Loading-models
+    /// NOTES on OBJ models
+    /// An OBJ file consists of positions, normals, texture coordinates and faces. Faces consist of
+    /// an arbitrary amount of vertices, where each vertex refers to a position, normal and/or
+    /// texture coordinate by index. This makes it possible to not just reuse entire vertices, but
+    /// also individual attributes.
+    /// The 'attrib' container holds all of the positions, normals and texture coordinates in its 
+    /// attrib.vertices, attrib.normals and attrib.texcoords vectors. 
+    /// The 'shapes' container contains all of the separate objects and their faces. Each face
+    /// consists of an array of vertices, and each vertex contains the indices of the position,
+    /// normal and texture coordinate attributes. OBJ models can also define a material and texture
+    /// per face, but we will be ignoring those.
+    /// The 'err' string contains errors and the warn string contains warnings that occurred while
+    /// loading the file, like a missing material definition. Loading only really failed if the 
+    /// 'LoadObj' function returns false. As mentioned above, faces in OBJ files can actually 
+    /// contain an arbitrary number of vertices, whereas our application can only render triangles.
+    /// Luckily the 'LoadObj' has an optional parameter to automatically triangulate such faces,
+    /// which is enabled by default.
+ 
+
+    /// Function that uses the tinyobjloader library to populate the vertices and indices containers
+    /// with the vertex data from the mesh.
+    void loadModel() {
+      tinyobj::attrib_t attrib;
+      std::vector<tinyobj::shape_t> shapes;
+      std::vector<tinyobj::material_t> materials;
+      std::string warn, err;
+
+      if(!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+        throw std::runtime_error(warn + err);
+      }
+
+      // map to store unique vertices
+      // using a user-defined type like our 'Vertex' struct as key in a hash table requires us to 
+      // implement two functions: equality test and hash calculation. The former is easy to
+      // implement by overriding the == operator in the 'Vertex' struct. A hash function for Vertex
+      // is implemented by specifying a template specialization for std::hash<T>.
+      std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+      // We're going to combine all of the faces in the file into a single model.
+      // The triangulation feature has already made sure that there are three vertices per face, so
+      // we can now directly iterate over the vertices and dump them straight into 'vertices'
+      // For simplicity, we will assume that every vertex is unique for now.
+      for (const auto& shape : shapes) {
+        for (const auto& index : shape.mesh.indices) {
+          Vertex vertex{};
+
+          // 'attrib.vertices' is an array of float values instead of something like glm::vec3, so
+          // you need to multiply the index by 3
+          vertex.pos = {
+            attrib.vertices[3 * index.vertex_index + 0],
+            attrib.vertices[3 * index.vertex_index + 1],
+            attrib.vertices[3 * index.vertex_index + 2]
+          };
+
+          // The OBJ format assumes a coordinate system where a vertical coordinate of 0 means the
+          // bottom of the image, however we've uploaded our image into Vulkan in a top to bottom
+          // orientation where 0 means the top of the image. Solve this by flipping the vertical
+          // component of the texture coordinates
+
+          // there are two texture coordinate components per entry.
+          vertex.texCoord = {
+            attrib.texcoords[2 * index.texcoord_index + 0],
+            1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+          };
+
+          vertex.color = {1.0f, 1.0f, 1.0f};
+
+          // The 'vertices' vector contains a lot of duplicated vertex data, because many vertices
+          // are included in multiple triangles. We should keep only the unique vertices and use
+          // the index buffer to reuse them whenever they come up.
+          if(uniqueVertices.count(vertex) == 0) {
+            uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+            vertices.push_back(vertex);
+          }
+
+          indices.push_back(uniqueVertices[vertex]);
+        }
+      }
+    }
+    #pragma endregion
+
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
@@ -2677,6 +2787,7 @@ class TriangleApp {
       createTextureImage();         // uses command buffers, hence called after createCommandPool
       createTextureImageView();
       createTextureSampler();
+      loadModel();
       createVertexBuffer();
       createIndexBuffer();
       createUniformBuffers();
