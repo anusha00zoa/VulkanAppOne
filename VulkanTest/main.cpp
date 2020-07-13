@@ -1,11 +1,15 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h> // automatically loads vulkan header along with GLFW's own definitions
 
-#define GLM_FORCE_RADIANS // necessary to make sure that glm functions use radians
+// necessary to make sure that glm functions use radians
+#define GLM_FORCE_RADIANS
+// for converting opengl [-1.0, 1.0] -> vulkan [0.0, 1.0] convention for depth buffering
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION // add this line to avoid linker errors
+// add this line to avoid linker errors
+#define STB_IMAGE_IMPLEMENTATION 
 #include <stb_image.h>
 
 #include <algorithm>
@@ -157,18 +161,29 @@ struct Vertex {
 
 // interleaved vertex attributes here
 const std::vector<Vertex> vertices = {
-    // CCW order of vertex data
-  {{-0.15, -0.15f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}}, // bottom left
-  {{0.15f, -0.15f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}}, // bottom right
-  {{0.15f, 0.15f, 0.0f},  {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},  // top right
-  {{-0.15f, 0.15f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}  // top left
+  // quad one
+  // CCW order of vertex data
+  // position               color               texCoord
+  {{-0.15f, -0.15f, 0.0f},  {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 0 - bottom left
+  {{0.15f, -0.15f, 0.0f},   {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 1 - bottom right
+  {{0.15f, 0.15f, 0.0f},    {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 2 - top right
+  {{-0.15f, 0.15f, 0.0f},   {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}, // 3 - top left
+
+  // quad two
+  {{-0.15f, -0.15f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}}, // 4
+  {{0.15f, -0.15f, -0.5f},  {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}, // 5
+  {{0.15f, 0.15f, -0.5f},   {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}}, // 6
+  {{-0.15f, 0.15f, -0.5f},  {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}}  // 7
 };
 
 
 // contents of the index buffer
 const std::vector<uint16_t> indices = {
     0, 1, 2, 
-    2, 3, 0
+    2, 3, 0,
+
+    4, 5, 6,
+    6, 7, 4
 };
 
 
@@ -262,6 +277,10 @@ class TriangleApp {
     // Destroyed before the image itself
     VkImageView                   textureImageView;
     VkSampler                     textureSampler;
+
+    VkImage                       depthImage;
+    VkDeviceMemory                depthImageMemory;
+    VkImageView                   depthImageView;
     #pragma endregion 
 
 
@@ -911,7 +930,8 @@ class TriangleApp {
 
       // iterate over all of the swap chain images.
       for(size_t i = 0; i < swapChainImages.size(); i++) {
-        swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
+        swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat,
+                                                  VK_IMAGE_ASPECT_COLOR_BIT);
 
         //VkImageViewCreateInfo createInfo {};
         //createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1143,6 +1163,25 @@ class TriangleApp {
       colorBlending.blendConstants[2] = 0.0f; // Optional
       colorBlending.blendConstants[3] = 0.0f; // Optional
 
+      // Enable depth testing
+      VkPipelineDepthStencilStateCreateInfo depthStencil{};
+      depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+      // Specifies if the depth of new fragments should be compared to the depth buffer to see if
+      // they should be discarded
+      depthStencil.depthTestEnable = VK_TRUE;
+      // Specifies if the new depth of fragments that pass the depth test should actually be
+      // written to the depth buffer
+      depthStencil.depthWriteEnable = VK_TRUE;
+      // Specifies the comparison that is performed to keep or discard fragments. We're sticking to
+      // the convention of lower depth = closer
+      depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+      // Optional depth bound test, which allows you to only keep fragments that fall within the 
+      // specified depth range
+      depthStencil.depthBoundsTestEnable = VK_FALSE;
+      depthStencil.minDepthBounds = 0.0f; // Optional
+      depthStencil.maxDepthBounds = 1.0f; // Optional
+      depthStencil.stencilTestEnable = VK_FALSE;
+
       // Dynamic state
       // A limited amount of the state that we've specified in the previous structs can actually be
       // changed without recreating the pipeline. Examples are the size of the viewport, line width
@@ -1187,7 +1226,7 @@ class TriangleApp {
       pipelineInfo.pViewportState = &viewportState;
       pipelineInfo.pRasterizationState = &rasterizer;
       pipelineInfo.pMultisampleState = &multisampling;
-      pipelineInfo.pDepthStencilState = nullptr; // Optional
+      pipelineInfo.pDepthStencilState = &depthStencil;
       pipelineInfo.pColorBlendState = &colorBlending;
       pipelineInfo.pDynamicState = nullptr; // Optional
       pipelineInfo.layout = pipelineLayout;
@@ -1244,16 +1283,16 @@ class TriangleApp {
     /// or more of the attachments that we've described using the structure. 
 
     void createRenderPass() {
-      // A single color buffer attachment represented by one of the images from the swap chain.
-      // The 'format' of the color attachment should match the format of the swap chain images
-      // The 'loadOp' and 'storeOp' determine what to do with the data in the attachment before
-      // rendering and after rendering.
-      // The 'initialLayout' specifies which layout the image will have before the render pass 
-      // begins. The finalLayout specifies the layout to automatically transition to when the 
-      // render pass finishes. Using VK_IMAGE_LAYOUT_UNDEFINED for initialLayout means that we
-      // don't care what previous layout the image was in. We want the image to be ready for 
-      // presentation using the swap chain after rendering, which is why we use 
-      // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR as finalLayout.
+      /// A single color buffer attachment represented by one of the images from the swap chain.
+      /// The 'format' of the color attachment should match the format of the swap chain images
+      /// The 'loadOp' and 'storeOp' determine what to do with the data in the attachment before
+      /// rendering and after rendering.
+      /// The 'initialLayout' specifies which layout the image will have before the render pass 
+      /// begins. The finalLayout specifies the layout to automatically transition to when the 
+      /// render pass finishes. Using VK_IMAGE_LAYOUT_UNDEFINED for initialLayout means that we
+      /// don't care what previous layout the image was in. We want the image to be ready for 
+      /// presentation using the swap chain after rendering, which is why we use 
+      /// VK_IMAGE_LAYOUT_PRESENT_SRC_KHR as finalLayout.
       VkAttachmentDescription colorAttachment {};
       colorAttachment.format = swapChainImageFormat;
       colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1261,17 +1300,38 @@ class TriangleApp {
       colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
       colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-      // Reference to subpass
-      // We intend to use the attachment to function as a color buffer
+      // Reference to subpass, we intend to use the attachment to function as a color buffer
       VkAttachmentReference colorAttachmentRef {};
       colorAttachmentRef.attachment = 0;
       colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+      // Depth attachment
+      VkAttachmentDescription depthAttachment{};
+      depthAttachment.format = findDepthFormat();
+      depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+      depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      // We don't care about storing depth data, it will not be used after drawing has finished
+      depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+      depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+      // We don't care about the previous depth contents
+      depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      // Reference to subpass
+      // Unlike color attachments, a subpass can only use a single depth (+stencil) attachment
+      // The color attachment differs for every swap chain image, but the same depth image can be
+      // used by all of them because only a single subpass is running at the same time due to our 
+      // semaphores.
+      VkAttachmentReference depthAttachmentRef{};
+      depthAttachmentRef.attachment = 1;
+      depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
       // Subpass description
       VkSubpassDescription subpass {};
       subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
       subpass.colorAttachmentCount = 1;
       subpass.pColorAttachments = &colorAttachmentRef;
+      subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
       // Subpass dependency
       VkSubpassDependency dependency {};
@@ -1283,10 +1343,11 @@ class TriangleApp {
       dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
       // Create the render pass object
+      std::array<VkAttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
       VkRenderPassCreateInfo renderPassInfo {};
       renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-      renderPassInfo.attachmentCount = 1;
-      renderPassInfo.pAttachments = &colorAttachment;
+      renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+      renderPassInfo.pAttachments = attachments.data();
       renderPassInfo.subpassCount = 1;
       renderPassInfo.pSubpasses = &subpass;
       renderPassInfo.dependencyCount = 1;
@@ -1317,15 +1378,16 @@ class TriangleApp {
 
       // Iterate through the image views and create framebuffers from them
       for(size_t i = 0; i < swapChainImageViews.size(); i++) {
-        VkImageView attachments[] = {
-            swapChainImageViews[i]
+        std::array<VkImageView, 2> attachments = {
+          swapChainImageViews[i],
+          depthImageView
         };
 
         VkFramebufferCreateInfo framebufferInfo {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+        framebufferInfo.pAttachments = attachments.data();
         framebufferInfo.width = swapChainExtent.width;
         framebufferInfo.height = swapChainExtent.height;
         framebufferInfo.layers = 1;
@@ -1376,6 +1438,7 @@ class TriangleApp {
       // to record a command buffer for every image in the swap chain once again.
     }
 
+
     void createCommandBuffers() {
       commandBuffers.resize(swapChainFramebuffers.size());
 
@@ -1395,6 +1458,13 @@ class TriangleApp {
       if(vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate command buffers!");
       }
+      
+      // The range of depths in the depth buffer is 0.0 to 1.0 in Vulkan, where 1.0 lies at the far
+      // view plane and 0.0 at the near view plane. The initial value at each point in the depth
+      // buffer should be the furthest possible depth, which is 1.0.
+      std::array<VkClearValue, 2> clearValues{};
+      clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+      clearValues[1].depthStencil = {1.0f, 0};
 
       // Begin recording command buffers
       for(size_t i = 0; i < commandBuffers.size(); i++) {
@@ -1431,8 +1501,8 @@ class TriangleApp {
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = swapChainExtent;
         VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
+        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+        renderPassInfo.pClearValues = clearValues.data();
 
         // Begin render pass
         vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -1633,6 +1703,7 @@ class TriangleApp {
       createImageViews(); // depends on swapchain images
       createRenderPass(); // depends on format of swapchain images
       createGraphicsPipeline(); // recreate viewport, scissor rectangles
+      createDepthResources();
       createFramebuffers(); // depends on format of swapchain images
       createUniformBuffers(); // since we're destroying them every frame
       createDescriptorPool(); // since we're destroying them in cleanupSwapchain
@@ -1643,6 +1714,10 @@ class TriangleApp {
 
     /// Make sure that the old versions of these objects are cleaned up before recreating them
     void cleanupSwapchain() {
+      vkDestroyImageView(logicalDevice, depthImageView, nullptr);
+      vkDestroyImage(logicalDevice, depthImage, nullptr);
+      vkFreeMemory(logicalDevice, depthImageMemory, nullptr);
+
       for(auto framebuffer : swapChainFramebuffers) {
         vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
       }
@@ -1940,10 +2015,9 @@ class TriangleApp {
         0.0f, -1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 0.5f, 0.0f,
         0.0f, 0.0f, 0.5f, 1.0f);*/
-      //printf("%d %d\n", swapChainExtent.width, swapChainExtent.height);
 
       // Perspective projection 
-      ubo.projection = glm::perspective(glm::radians(60.0f), // field-of-view
+      ubo.projection = glm::perspective(glm::radians(45.0f), // field-of-view
                                   swapChainExtent.width / (float)swapChainExtent.height, // aspect ratio
                                   0.1f, // near plane
                                   10.0f); // far plane
@@ -2074,6 +2148,7 @@ class TriangleApp {
     /// It is possible to create 1D, 2D and 3D images. 1D images can be used to store an array of
     /// data or gradient, 2D images are mainly used for textures, and 3D images can be used to
     /// store voxel volumes, for example.
+
 
     /// Function to load an image and upload it into a Vulkan image object
     void createTextureImage() {
@@ -2270,22 +2345,43 @@ class TriangleApp {
       // already using vkQueueWaitIdle to manually synchronize.
       //barrier.srcAccessMask = 0;
       //barrier.dstAccessMask = 0;
-      if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+      if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED 
+          && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
       }
-      else if(oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      else if(oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 
+              && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
       }
+      else if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED 
+              && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT 
+                                | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+      }
       else {
         throw std::invalid_argument("unsupported layout transition!");
+      }
+
+      if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+        if (hasStencilComponent(format)) {
+          barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+      } else {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       }
 
       // All types of pipeline barriers are submitted using the same function below
@@ -2425,18 +2521,19 @@ class TriangleApp {
 
     /// Function to create an image view for our texture
     void createTextureImageView() {
-      textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+      textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, 
+                                          VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
 
     /// Helper function to create image views
-    VkImageView createImageView(VkImage image, VkFormat format) {
+    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
       VkImageViewCreateInfo viewInfo {};
       viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
       viewInfo.image = image;
       viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
       viewInfo.format = format;
-      viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      viewInfo.subresourceRange.aspectMask = aspectFlags;
       viewInfo.subresourceRange.baseMipLevel = 0;
       viewInfo.subresourceRange.levelCount = 1;
       viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -2448,6 +2545,101 @@ class TriangleApp {
       }
 
       return imageView;
+    }
+    #pragma endregion
+
+
+    #pragma region Depth-Buffering
+    /// NOTES on depth buffering
+    /// Approach 1 - Sort all of the draw calls by depth from back to front. This approach is
+    /// commonly used for drawing transparent objects, because order-independent transparency is a
+    /// difficult challenge to solve. However, the problem of ordering fragments by depth is much
+    /// more commonly solved using a depth buffer. 
+    /// Approach 2 - Use depth testing with a depth buffer, which is an additional attachment that
+    /// stores the depth for every position, just like the color attachment stores the color of
+    /// every position. Every time the rasterizer produces a fragment, the depth test will check if
+    /// the new fragment is closer than the previous one. If it isn't, then the new fragment is
+    /// discarded. A fragment that passes the depth test writes its own depth to the depth buffer.
+    /// It is possible to manipulate this value from the fragment shader, just like you can 
+    /// manipulate the color output.
+    /// You will need to modify 'createRenderPass' also to include a depth attachment, and then
+    /// modify the framebuffer creation to bind the depth image to the depth attachment. At this 
+    /// point, the depth attachment is ready to be used, but depth testing still needs to be 
+    /// enabled in the graphics pipeline.
+
+    /// NOTES on Depth image and view
+    /// A depth attachment is based on an image, just like the color attachment. The difference is
+    /// that the swap chain will not automatically create depth images for us. We only need a
+    /// single depth image, because only one draw operation is running at once. The depth image
+    /// will again require the trifecta of resources : image, memory and image view.
+    /// Creating a depth image is fairly straightforward. It should have the same resolution as the
+    /// color attachment, defined by the swap chain extent, an image usage appropriate for a depth
+    /// attachment, optimal tiling and device local memory.
+    /// Unlike the texture image, we don't necessarily need a specific format, because we won't be
+    /// directly accessing the texels from the program. It just needs to have reasonable accuracy,
+    /// at least 24 bits is common in real-world applications.
+
+    /// The depth buffer will be read from to perform depth tests to see if a fragment is visible,
+    /// and will be written to when a new fragment is drawn. The reading happens in the 
+    /// VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT stage and the writing in the 
+    /// VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT. You should pick the earliest pipeline stage that
+    /// matches the specified operations, so that it is ready for usage as depth attachment when it
+    /// needs to be.
+
+    /// Function to setup resources for the depth image
+    void createDepthResources() {
+      VkFormat depthFormat = findDepthFormat();
+
+      createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, 
+                  VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+      
+      depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+      // Optional - transition the layout of the image to a depth attachment is handled in the
+      // render pass
+      transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, 
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+
+    /// Helper function that takes a list of candidate formats in order from most desired to least
+    /// desirable, and checks which is the first one that is supported. The support of a format 
+    /// depends on the tiling mode and usage, so we must also include these as parameters.
+    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling,
+                                  VkFormatFeatureFlags features) {
+      for (VkFormat format : candidates) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+
+        if(tiling == VK_IMAGE_TILING_LINEAR 
+            && (props.linearTilingFeatures & features) == features) {
+          return format;
+        }
+        else if(tiling == VK_IMAGE_TILING_OPTIMAL 
+                && (props.optimalTilingFeatures & features) == features) {
+          return format;
+        }
+      }
+
+      throw std::runtime_error("failed to find supported format!");
+    }
+
+
+    /// Helper function to select a format with a depth component that supports usage as depth
+    /// attachment
+    VkFormat findDepthFormat() {
+      return findSupportedFormat(
+          {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+      );
+    }
+
+
+    /// Helper function that tells us if the chosen depth format contains a stencil component
+    bool hasStencilComponent(VkFormat format) {
+        return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
     }
     #pragma endregion
 
@@ -2479,8 +2671,9 @@ class TriangleApp {
       createRenderPass();
       createDescriptorSetLayout();  // provide details about descriptor binding in shaders
       createGraphicsPipeline();
-      createFramebuffers();         // create the framebuffers for our swapchain images
       createCommandPool();
+      createDepthResources();
+      createFramebuffers();         // create the framebuffers for our swapchain images
       createTextureImage();         // uses command buffers, hence called after createCommandPool
       createTextureImageView();
       createTextureSampler();
