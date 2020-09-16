@@ -7,6 +7,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
@@ -34,12 +35,13 @@
 
 
 // window parameters
-const uint32_t  WIDTH                 = 800;
-const uint32_t  HEIGHT                = 600;
+const uint32_t  WIDTH                 = 1080;
+const uint32_t  HEIGHT                = 720;
 const int       MAX_FRAMES_IN_FLIGHT  = 2;
 
 const std::string MODEL_PATH          = "models/viking_room.obj";
 const std::string TEXTURE_PATH        = "textures/viking_room.png";
+
 
 // config variable to the program to specify the layers to enable
 const std::vector<const char*> validationLayers = {
@@ -218,9 +220,12 @@ struct UniformBufferObject {
 };
 #pragma endregion 
 
-
 class TriangleApp {
   public:
+    static bool keys[1024];
+    static bool mouseFirstMoved;
+    static GLfloat lastX, lastY, xChange, yChange;
+
     void run() {
       initWindow();
       initVulkan();
@@ -309,6 +314,19 @@ class TriangleApp {
     std::vector<uint32_t>         indices;
 
     uint32_t                      mipLevels;
+
+    // Camera control
+    GLfloat                       deltaTime = 0.0f, lastTime = 0.0f;
+    
+    GLfloat                       moveSpeed = 1.0f, turnSpeed = 0.0f;
+    
+    GLfloat                       yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
+    
+    glm::vec3                     position = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec3                     up = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3                     front = glm::vec3(0.0f, 0.0f, 1.0f);
+    glm::vec3                     right = glm::vec3(1.0f, 0.0f, 0.0f);
+    glm::vec3                     worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
     #pragma endregion 
 
 
@@ -2028,16 +2046,19 @@ class TriangleApp {
       // Now define the model, view and projection transformations in the uniform buffer object.
       // Here, model rotation is simply around Z-axis at a speed of 90 deg / second
       UniformBufferObject ubo {};
-      ubo.model = glm::mat4(1.0f);
+      ubo.model = glm::rotate(-1.57f, glm::vec3(0, 0, 1)) * glm::rotate(-1.57f, glm::vec3(0, 1, 0));
       //ubo.model = glm::rotate(glm::mat4(1.0f),              // identity matrix 
       //                        time * glm::radians(20.0f),   // rotation angle
       //                        glm::vec3(0.0f, 0.0f, 1.0f)); // rotation axis
 
       // View the geometry
       //ubo.view = glm::mat4(1.0f);
-      ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), // eye position
+      //ubo.view = glm::lookAt(glm::vec3(0.0f, 1.0f, 3.0f), // eye position
+      //                      glm::vec3(0.0f, 0.0f, 0.0f),  // center position
+      //                      glm::vec3(0.0f, 1.0f, 0.0f)); // up axis
+      ubo.view = glm::lookAt(position,
                             glm::vec3(0.0f, 0.0f, 0.0f),  // center position
-                            glm::vec3(0.0f, 0.0f, 1.0f)); // up axis
+                            glm::vec3(0.0f, 1.0f, 0.0f)); // up axis
 
       /*const glm::mat4 clip(1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, -1.0f, 0.0f, 0.0f,
@@ -2048,7 +2069,7 @@ class TriangleApp {
       ubo.projection = glm::perspective(glm::radians(45.0f), // field-of-view
                                   swapChainExtent.width / (float)swapChainExtent.height, // aspect ratio
                                   0.1f, // near plane
-                                  10.0f); // far plane
+                                  100.0f); // far plane
       /// It is important to use the current swap chain extent to calculate the aspect ratio to take
       /// into account the new width and height of the window after a resize.
 
@@ -2908,6 +2929,125 @@ class TriangleApp {
     #pragma endregion
 
 
+    #pragma region Camera-Control
+    void Update() {
+      front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+      front.y = sin(glm::radians(pitch));
+      front.z = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+      front = glm::normalize(front);
+
+      // Right = Cross product of front and world up
+      right = glm::normalize(glm::cross(front, worldUp));
+      // Up = Cross product of front and right, order is important
+      up = glm::normalize(glm::cross(right, front));                        	
+    }
+
+    /// Util function to print position of camera
+    void DebugPrintCameraPosition(std::string prefix) {
+      printf("%s: %f, %f, %f\n", prefix, position.x, position.y, position.z);
+    }
+
+
+    /// Function that determines what and how keys control camera movement
+    void keyControl(bool *keys, GLfloat deltaTime) {
+      GLfloat velocity = moveSpeed * deltaTime;
+
+      if(keys[GLFW_KEY_W]) {	// Forward
+        // DebugPrintCameraPosition("Forward before");
+        position += front * velocity;
+        // DebugPrintCameraPosition("Forward after");
+      }
+      if(keys[GLFW_KEY_S]) { // Backward
+        // DebugPrintCameraPosition("Backward before");
+        position -= front * velocity;
+        // DebugPrintCameraPosition("Backward after");
+      }
+      if(keys[GLFW_KEY_A]) { // Left
+        // DebugPrintCameraPosition("Left before");
+        position -= right * velocity;
+        // DebugPrintCameraPosition("Left after");
+      }
+      if(keys[GLFW_KEY_D]) { // Right
+        // DebugPrintCameraPosition("Right before");
+        position += right * velocity;
+        // DebugPrintCameraPosition("Right after");
+      }
+      if(keys[GLFW_KEY_Q]) { // Up
+        // DebugPrintCameraPosition("Up before");
+        position += up * velocity;
+        // DebugPrintCameraPosition("Up after");
+      }
+      if(keys[GLFW_KEY_E]) { // Down
+        // DebugPrintCameraPosition("Down before");
+        position -= up * velocity;
+        // DebugPrintCameraPosition("Down after");
+      }
+    }
+
+
+    /// Function that determines how mouse controls camera movement
+    void mouseControl(GLfloat xChange, GLfloat yChange) {
+      xChange *= turnSpeed;
+      yChange *= turnSpeed;
+
+      yaw += xChange;
+      pitch += yChange;
+
+      if(pitch > 89.0f) {
+        pitch = 89.0f;
+      }
+
+      if(pitch < -89.0f) {
+        pitch = -89.0f;
+      }
+
+      Update();
+    }
+
+
+    static void handleKeys(GLFWwindow *window, int key, int code, int action, int mode) {
+      
+      if(key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GL_TRUE);
+      }
+
+      if(key >= 0 && key < 1024) {
+        if(action == GLFW_PRESS) {
+          keys[key] = true;
+          //printf("Pressed: %d\n", key);
+        }
+        else if(action == GLFW_RELEASE) {
+          keys[key] = false;
+          //printf("Released: %d\n", key);
+        }
+      }
+    }
+
+
+    static void handleMouse(GLFWwindow *window, double xPos, double yPos) {
+      if(mouseFirstMoved) {
+        lastX = xPos;
+        lastY = yPos;
+        mouseFirstMoved = false;
+      }
+
+      xChange = xPos - lastX;
+      // To match the y direction of the coordinate system
+      yChange = lastY - yPos;
+
+      lastX = xPos;
+      lastY = yPos;
+
+      // printf("x:%.6f, y:%.6f\n", xChange, yChange);
+    }
+
+    void CreateCallbacks() {
+      glfwSetKeyCallback(window, handleKeys);
+      glfwSetCursorPosCallback(window, handleMouse);
+    }
+    #pragma endregion
+
+
     #pragma region Base-code
     /// Window creation 
     void initWindow() {
@@ -2920,6 +3060,8 @@ class TriangleApp {
       glfwSetWindowUserPointer(window, this);
       // Actually detect resizes
       glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+      CreateCallbacks();
     }
 
 
@@ -2991,9 +3133,19 @@ class TriangleApp {
 
 
     void mainLoop() {
-      // to keep the window open until it is closed or an error occurs
+      // To keep the window open until it is closed or an error occurs
       while(!glfwWindowShouldClose(window)) { 
+        // Calculate delta time
+        GLfloat now = glfwGetTime();
+        deltaTime = now - lastTime;
+        lastTime = now;
+
+        // Get and handle user input events
         glfwPollEvents();
+
+        keyControl(keys, deltaTime);
+        //mouseControl(xChange, yChange);
+
         drawFrame();
       }
 
@@ -3017,6 +3169,14 @@ int main() {
 
   return EXIT_SUCCESS; // from cstdlib
 }
+
+
+bool TriangleApp::keys[1024];
+bool TriangleApp::mouseFirstMoved;
+GLfloat TriangleApp::lastX;
+GLfloat TriangleApp::lastY;
+GLfloat TriangleApp::xChange;
+GLfloat TriangleApp::yChange;
 
 
 // // CODE BELOW CHECKS THAT ENVIRONMENT HAS BEEN SETUP CORRECTLY
